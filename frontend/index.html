@@ -8,13 +8,34 @@
 </head>
 <body>
     <canvas id="qvis-canvas"></canvas>
+    
+    <!-- Cinematic Vignette Overlay -->
+    <div id="vignette"></div>
+
     <div id="hud"></div>
     <div id="threat-panel"></div>
     <div id="legend"></div>
     <div id="controls"></div>
-    <div id="loading">Loading Quantum Simulation State...</div>
+    
+    <div id="loading">
+        <div class="loader-ring"></div>
+        <div class="loader-text">INITIALIZING QUANTUM STATE...</div>
+    </div>
 
+    <!-- Core Three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <!-- Post-Processing Modules -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+    <!-- Tween for smooth camera movements -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+
     <script type="module" src="js/main.js"></script>
 </body>
 </html>

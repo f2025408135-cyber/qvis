@@ -5,9 +5,9 @@ export class Controls {
         
         this.target = new THREE.Vector3();
         
-        this.radius = 500;
-        this.theta = 0;
-        this.phi = Math.PI / 2;
+        this.radius = 600;
+        this.theta = Math.PI / 4;
+        this.phi = Math.PI / 2.5;
         
         this.isDragging = false;
         this.previousMousePosition = { x: 0, y: 0 };
@@ -58,7 +58,7 @@ export class Controls {
     onMouseWheel(event) {
         event.preventDefault();
         this.radius += event.deltaY * 0.5;
-        this.radius = Math.max(100, Math.min(1000, this.radius));
+        this.radius = Math.max(100, Math.min(2000, this.radius));
         this.markInteraction();
     }
     
@@ -89,15 +89,18 @@ export class Controls {
     }
     
     update() {
+        // Skip normal updates if TWEEN is driving the camera
+        if (window.__isAnimatingCamera) return;
+
         const timeSinceInteraction = performance.now() - this.lastInteractionTime;
         
         if (timeSinceInteraction > 10000 && !this.isDragging) {
             this.theta += 0.0003;
         }
         
-        const targetX = this.radius * Math.sin(this.phi) * Math.cos(this.theta);
-        const targetY = this.radius * Math.cos(this.phi);
-        const targetZ = this.radius * Math.sin(this.phi) * Math.sin(this.theta);
+        const targetX = this.target.x + this.radius * Math.sin(this.phi) * Math.cos(this.theta);
+        const targetY = this.target.y + this.radius * Math.cos(this.phi);
+        const targetZ = this.target.z + this.radius * Math.sin(this.phi) * Math.sin(this.theta);
         
         this.camera.position.lerp(new THREE.Vector3(targetX, targetY, targetZ), 0.05);
         this.camera.lookAt(this.target);
