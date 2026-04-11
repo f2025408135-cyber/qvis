@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "qvis"
+version = "0.1.0"
+description = "Live quantum threat topology visualization engine"
+authors = ["QVis Author <author@example.com>"]
+
+[tool.poetry.dependencies]
+python = ">=3.11"
+fastapi = ">=0.110.0"
+uvicorn = {extras = ["standard"], version = ">=0.27.0"}
+websockets = ">=12.0"
+pydantic = ">=2.6.0"
+pydantic-settings = ">=2.2.0"
+qiskit = ">=1.0.0"
+qiskit-ibm-runtime = ">=0.20.0"
+amazon-braket-sdk = ">=1.73.0"
+anthropic = ">=0.25.0"
+httpx = ">=0.27.0"
+structlog = ">=24.1.0"
+python-dotenv = ">=1.0.0"
+asyncio = ">=3.4.3"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
