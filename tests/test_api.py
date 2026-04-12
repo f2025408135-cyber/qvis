@@ -1,6 +1,9 @@
 import pytest
 from fastapi.testclient import TestClient
-from backend.main import app
+from backend.main import app, collector
+
+# Put mock collector in test mode to disable random state mutation
+collector.is_test = True
 
 client = TestClient(app)
 

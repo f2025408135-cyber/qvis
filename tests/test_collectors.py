@@ -5,7 +5,9 @@ from backend.threat_engine.models import SimulationSnapshot
 
 @pytest.fixture
 def mock_collector():
-    return MockCollector()
+    collector = MockCollector()
+    collector.is_test = True
+    return collector
 
 @pytest.mark.asyncio
 async def test_mock_collector_returns_simulation_snapshot(mock_collector):
