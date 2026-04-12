@@ -1,4 +1,5 @@
 import asyncio
+import os
 import structlog
 from contextlib import asynccontextmanager
 from typing import List, Optional
@@ -9,21 +10,24 @@ from fastapi.responses import JSONResponse
 from backend.config import settings
 from backend.api.websocket import manager
 from backend.collectors.mock import MockCollector
+from backend.threat_engine.analyzer import ThreatAnalyzer
 from backend.threat_engine.models import SimulationSnapshot, BackendNode, ThreatEvent, Severity
 
 logger = structlog.get_logger()
 
 latest_snapshot: Optional[SimulationSnapshot] = None
 collector = MockCollector() 
+analyzer = ThreatAnalyzer()
 
 async def simulation_loop():
     global latest_snapshot
     while True:
         try:
             snapshot = await collector.collect()
-            latest_snapshot = snapshot
-            await manager.broadcast_snapshot(snapshot)
-            logger.info("snapshot_broadcasted", snapshot_id=snapshot.snapshot_id)
+            enriched_snapshot = analyzer.analyze(snapshot)
+            latest_snapshot = enriched_snapshot
+            await manager.broadcast_snapshot(enriched_snapshot)
+            logger.info("snapshot_broadcasted", snapshot_id=enriched_snapshot.snapshot_id)
             await asyncio.sleep(settings.update_interval_seconds)
         except asyncio.CancelledError:
             break
@@ -37,7 +41,7 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(simulation_loop())
     global latest_snapshot
     try:
-        latest_snapshot = await collector.collect()
+        latest_snapshot = analyzer.analyze(await collector.collect())
     except Exception as e:
         logger.error("initial_snapshot_error", error=str(e))
     yield
@@ -48,7 +52,7 @@ app = FastAPI(title="QVis API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[os.getenv("CORS_ORIGINS", "http://localhost:3000")],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,21 +69,21 @@ async def health_check():
 @app.get("/api/snapshot", response_model=SimulationSnapshot)
 async def get_snapshot():
     if latest_snapshot is None:
-        return await collector.collect()
+        return analyzer.analyze(await collector.collect())
     return latest_snapshot
 
 @app.get("/api/backends", response_model=List[BackendNode])
 async def get_backends():
     snapshot = latest_snapshot
     if snapshot is None:
-        snapshot = await collector.collect()
+        snapshot = analyzer.analyze(await collector.collect())
     return snapshot.backends
 
 @app.get("/api/threats", response_model=List[ThreatEvent])
 async def get_threats(severity: Optional[Severity] = None):
     snapshot = latest_snapshot
     if snapshot is None:
-        snapshot = await collector.collect()
+        snapshot = analyzer.analyze(await collector.collect())
     if severity:
         return [t for t in snapshot.threats if t.severity == severity]
     return snapshot.threats
@@ -88,7 +92,7 @@ async def get_threats(severity: Optional[Severity] = None):
 async def get_threat_detail(threat_id: str):
     snapshot = latest_snapshot
     if snapshot is None:
-        snapshot = await collector.collect()
+        snapshot = analyzer.analyze(await collector.collect())
     for threat in snapshot.threats:
         if threat.id == threat_id:
             return threat
@@ -98,14 +102,26 @@ async def get_threat_detail(threat_id: str):
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
+        # Prevent broadcast storm: send only to the connecting client
         if latest_snapshot:
-            await manager.broadcast_snapshot(latest_snapshot)
+            await websocket.send_text(latest_snapshot.model_dump_json())
         else:
-            snapshot = await collector.collect()
-            await manager.broadcast_snapshot(snapshot)
+            snapshot = analyzer.analyze(await collector.collect())
+            await websocket.send_text(snapshot.model_dump_json())
             
         while True:
-            data = await websocket.receive_text()
+            # Handle incoming messages from the client
+            data = await websocket.receive_json()
+            msg_type = data.get("type")
+            if msg_type == "get_snapshot":
+                if latest_snapshot:
+                    await websocket.send_text(latest_snapshot.model_dump_json())
+            elif msg_type == "focus_backend":
+                backend_id = data.get("backend_id")
+                # Stub for more complex interaction
+                logger.info("client_focus_backend", backend_id=backend_id)
+            else:
+                logger.warning("unknown_websocket_message", message=data)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:
