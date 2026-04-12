@@ -1,3 +1,5 @@
+"""Main FastAPI application entry point serving QVis API and WebSockets."""
+
 import asyncio
 import os
 import json
@@ -10,17 +12,32 @@ from fastapi.responses import JSONResponse
 
 from backend.config import settings
 from backend.api.websocket import manager
-from backend.collectors.mock import MockCollector
 from backend.threat_engine.analyzer import ThreatAnalyzer
 from backend.threat_engine.models import SimulationSnapshot, BackendNode, ThreatEvent, Severity
 
 logger = structlog.get_logger()
 
 latest_snapshot: Optional[SimulationSnapshot] = None
-collector = MockCollector() 
 analyzer = ThreatAnalyzer()
 
+# Determine collector strategy based on environment config.
+if os.environ.get("PYTEST_CURRENT_TEST") or settings.demo_mode:
+    from backend.collectors.mock import MockCollector
+    collector = MockCollector()
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        collector.is_test = True
+    logger.info("using_mock_collector", mode="demo_or_test")
+elif settings.ibm_quantum_token:
+    from backend.collectors.ibm import IBMQuantumCollector
+    collector = IBMQuantumCollector(ibm_token=settings.ibm_quantum_token)
+    logger.info("using_ibm_collector", backends="live")
+else:
+    from backend.collectors.mock import MockCollector
+    logger.warning("no_token_configured_using_mock")
+    collector = MockCollector()
+
 async def simulation_loop():
+    """Background task continually refreshing telemetry and broadcasting state."""
     global latest_snapshot
     while True:
         try:
@@ -38,14 +55,26 @@ async def simulation_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Manages application startup and teardown routines."""
+    
+    is_testing = bool(os.environ.get("PYTEST_CURRENT_TEST")) or "pytest" in os.environ.get("_", "")
+    
+    if is_testing:
+        logger.info("testing_mode_detected_skipping_loop")
+        yield
+        return
+        
     logger.info("starting_simulation_loop")
     task = asyncio.create_task(simulation_loop())
+    
     global latest_snapshot
     try:
         latest_snapshot = analyzer.analyze(await collector.collect())
     except Exception as e:
         logger.error("initial_snapshot_error", error=str(e))
+        
     yield
+    
     task.cancel()
     logger.info("shutting_down_simulation_loop")
 
@@ -61,39 +90,43 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def health_check():
+    """Validates the API is responsive and running."""
     return {
         "status": "ok",
         "demo_mode": settings.demo_mode,
-        "connected_platforms": ["mock"] if settings.demo_mode else []
+        "active_collector": "mock" if type(collector).__name__ == "MockCollector" else "ibm_quantum",
+        "connected_platforms": ["mock"] if settings.demo_mode else ["ibm_quantum"] if settings.ibm_quantum_token else []
     }
+
+async def _ensure_snapshot():
+    global latest_snapshot
+    if latest_snapshot is None:
+        latest_snapshot = analyzer.analyze(await collector.collect())
+    return latest_snapshot
 
 @app.get("/api/snapshot", response_model=SimulationSnapshot)
 async def get_snapshot():
-    if latest_snapshot is None:
-        return analyzer.analyze(await collector.collect())
-    return latest_snapshot
+    """Returns the most recent fully resolved simulation state."""
+    return await _ensure_snapshot()
 
 @app.get("/api/backends", response_model=List[BackendNode])
 async def get_backends():
-    snapshot = latest_snapshot
-    if snapshot is None:
-        snapshot = analyzer.analyze(await collector.collect())
+    """Returns the list of all currently tracked quantum backends."""
+    snapshot = await _ensure_snapshot()
     return snapshot.backends
 
 @app.get("/api/threats", response_model=List[ThreatEvent])
 async def get_threats(severity: Optional[Severity] = None):
-    snapshot = latest_snapshot
-    if snapshot is None:
-        snapshot = analyzer.analyze(await collector.collect())
+    """Returns a list of active threat detections."""
+    snapshot = await _ensure_snapshot()
     if severity:
         return [t for t in snapshot.threats if t.severity == severity]
     return snapshot.threats
 
 @app.get("/api/threat/{threat_id}", response_model=ThreatEvent)
 async def get_threat_detail(threat_id: str):
-    snapshot = latest_snapshot
-    if snapshot is None:
-        snapshot = analyzer.analyze(await collector.collect())
+    """Retrieves deeply detailed evidence and remediation for a specific threat."""
+    snapshot = await _ensure_snapshot()
     for threat in snapshot.threats:
         if threat.id == threat_id:
             return threat
@@ -101,13 +134,11 @@ async def get_threat_detail(threat_id: str):
 
 @app.websocket("/ws/simulation")
 async def websocket_endpoint(websocket: WebSocket):
+    """Manages full duplex connection handling for live telemetry streams."""
     await manager.connect(websocket)
     try:
-        if latest_snapshot:
-            await manager.send_personal_message(latest_snapshot.model_dump_json(), websocket)
-        else:
-            snapshot = analyzer.analyze(await collector.collect())
-            await manager.send_personal_message(snapshot.model_dump_json(), websocket)
+        snapshot = await _ensure_snapshot()
+        await manager.send_personal_message(snapshot.model_dump_json(), websocket)
             
         while True:
             data = await websocket.receive_text()
@@ -115,17 +146,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 msg = json.loads(data)
                 msg_type = msg.get("type")
                 if msg_type == "get_snapshot":
-                    if latest_snapshot:
-                        await manager.send_personal_message(latest_snapshot.model_dump_json(), websocket)
+                    snap = await _ensure_snapshot()
+                    await manager.send_personal_message(snap.model_dump_json(), websocket)
                 elif msg_type == "focus_backend":
                     backend_id = msg.get("backend_id")
                     logger.info("client_focus_backend", backend_id=backend_id)
-                    # Respond with backend info if requested
-                    if latest_snapshot:
-                        for b in latest_snapshot.backends:
-                            if b.id == backend_id:
-                                await manager.send_personal_message(json.dumps({"type": "backend_focus_ack", "backend": b.model_dump()}), websocket)
-                                break
+                    snap = await _ensure_snapshot()
+                    for b in snap.backends:
+                        if b.id == backend_id:
+                            await manager.send_personal_message(json.dumps({"type": "backend_focus_ack", "backend": b.model_dump()}), websocket)
+                            break
                 else:
                     logger.warning("unknown_websocket_message", message=msg)
             except json.JSONDecodeError:
