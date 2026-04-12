@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from backend.collectors.mock import MockCollector
 from backend.collectors.ibm import IBMQuantumCollector
-from backend.threat_engine.models import SimulationSnapshot
+from backend.threat_engine.models import SimulationSnapshot, Severity
 from unittest.mock import patch, MagicMock
 import sys
 
@@ -49,7 +49,6 @@ async def test_ibm_collector_returns_empty_when_no_token():
 
 @pytest.mark.asyncio
 async def test_ibm_collector_returns_simulation_snapshot():
-    # We must mock qiskit_ibm_runtime so it doesn't fail import if not installed
     mock_qiskit = MagicMock()
     mock_service_class = MagicMock()
     mock_qiskit.QiskitRuntimeService = mock_service_class
@@ -62,11 +61,32 @@ async def test_ibm_collector_returns_simulation_snapshot():
         mock_backend.name = "ibm_fake"
         mock_backend.num_qubits = 5
         mock_backend.simulator = False
+        
+        # In IBM collector we safely do await asyncio.to_thread(backend.status)
+        # So we just mock the return value of that call. 
         mock_status = MagicMock()
         mock_status.operational = True
-        mock_backend.status.return_value = mock_status
+        mock_backend.status = lambda: mock_status
         
-        mock_service_instance.backends.return_value = [mock_backend]
+        mock_config = MagicMock()
+        mock_config.n_qubits = 5
+        mock_config.simulator = False
+        mock_config.max_experiments = 100
+        mock_backend.configuration = lambda: mock_config
+        
+        class MockParam:
+            def __init__(self, name, value):
+                self.name = name
+                self.value = value
+
+        mock_props = MagicMock()
+        mock_props.qubits = [[MockParam("T1", 0.000025), MockParam("T2", 0.000050), MockParam("readout_error", 0.06)]]
+        # Avoid MagicMock vs Float error by ensuring properties is a function returning the mock object
+        mock_backend.properties = lambda: mock_props
+        
+        # Same for backends and jobs
+        mock_service_instance.backends = lambda: [mock_backend]
+        mock_service_instance.jobs = lambda **kwargs: []
         
         collector = IBMQuantumCollector("fake-token")
         snapshot = await collector.collect()
@@ -75,6 +95,26 @@ async def test_ibm_collector_returns_simulation_snapshot():
         assert len(snapshot.backends) == 1
         assert snapshot.backends[0].name == "ibm_fake"
         assert snapshot.backends[0].num_qubits == 5
+        assert len(snapshot.backends[0].calibration) == 1
+        
+        assert snapshot.backends[0].threat_level == Severity.high
     finally:
         del sys.modules['qiskit_ibm_runtime']
 
+@pytest.mark.asyncio
+async def test_ibm_collector_auth_failure_graceful_degradation():
+    mock_qiskit = MagicMock()
+    mock_service_class = MagicMock()
+    mock_service_class.side_effect = Exception("Auth failed")
+    mock_qiskit.QiskitRuntimeService = mock_service_class
+    sys.modules['qiskit_ibm_runtime'] = mock_qiskit
+    
+    try:
+        collector = IBMQuantumCollector("bad-token")
+        snapshot = await collector.collect()
+        
+        assert len(snapshot.backends) == 0
+        assert snapshot.snapshot_id == "empty-snapshot"
+        assert snapshot.collection_metadata["degraded"] == True
+    finally:
+        del sys.modules['qiskit_ibm_runtime']
