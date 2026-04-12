@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Any
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -59,3 +59,9 @@ class SimulationSnapshot(BaseModel):
     total_threats: int
     threats_by_severity: Dict[str, int]
     platform_health: Dict[str, float]
+    
+    # We must allow extra fields because the threat analyzer rules look for raw 
+    # platform telemetry mixed into the snapshot dictionary
+    model_config = {
+        "extra": "allow"
+    }

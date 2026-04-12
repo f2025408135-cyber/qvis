@@ -4,78 +4,61 @@ from backend.threat_engine.rules import (
     RULE_001_credential_leak_github_search,
     RULE_002_calibration_harvest_rate,
     RULE_003_timing_oracle_job_pattern,
+    RULE_004_cross_tenant_id_probing,
+    RULE_005_resource_exhaustion_circuit,
     RULE_006_ip_extraction_idor,
+    RULE_007_token_scope_violation,
+    RULE_008_backend_health_anomaly,
     ALL_RULES
 )
 from backend.threat_engine.analyzer import ThreatAnalyzer
-from backend.threat_engine.models import Severity
+from backend.threat_engine.models import Severity, SimulationSnapshot
 
 def test_rule_001_detects_credential_exposure_in_search_results():
-    data = {
-        "github_search_results": [
-            {"repo": "test", "pattern": "QiskitRuntimeService(token='valid123')"}
-        ]
-    }
+    data = {"github_search_results": [{"repo": "test", "pattern": "QiskitRuntimeService(token='valid123')"}]}
     events = RULE_001_credential_leak_github_search(data)
     assert len(events) == 1
     assert events[0].technique_id == "QTT017"
 
 def test_rule_001_ignores_placeholder_tokens():
-    data = {
-        "github_search_results": [
-            {"repo": "test", "pattern": "QiskitRuntimeService(token='YOUR_TOKEN')"},
-            {"repo": "test2", "pattern": "QiskitRuntimeService(token='PLACEHOLDER')"}
-        ]
-    }
+    data = {"github_search_results": [{"repo": "test", "pattern": "QiskitRuntimeService(token='YOUR_TOKEN')"}]}
     events = RULE_001_credential_leak_github_search(data)
     assert len(events) == 0
 
 def test_rule_002_detects_high_calibration_request_ratio():
-    data = {
-        "api_access_log": {
-            "calibration_requests_last_hour": 100,
-            "job_submissions_last_hour": 10
-        }
-    }
+    data = {"api_access_log": {"calibration_requests_last_hour": 100, "job_submissions_last_hour": 10}}
     events = RULE_002_calibration_harvest_rate(data)
     assert len(events) == 1
     assert events[0].technique_id == "QTT002"
     assert events[0].visual_effect == "calibration_drain"
 
 def test_rule_002_ignores_normal_ratio():
-    data = {
-        "api_access_log": {
-            "calibration_requests_last_hour": 20,
-            "job_submissions_last_hour": 10
-        }
-    }
+    data = {"api_access_log": {"calibration_requests_last_hour": 20, "job_submissions_last_hour": 10}}
     events = RULE_002_calibration_harvest_rate(data)
     assert len(events) == 0
 
 def test_rule_003_detects_identity_heavy_circuit():
-    data = {
-        "recent_jobs": [
-            {
-                "job_id": "123",
-                "gate_histogram": {"id": 15, "cx": 2}
-            }
-        ]
-    }
+    data = {"recent_jobs": [{"job_id": "123", "gate_histogram": {"id": 15, "cx": 2}}]}
     events = RULE_003_timing_oracle_job_pattern(data)
     assert len(events) == 1
     assert events[0].technique_id == "QTT003"
 
 def test_rule_003_ignores_legitimate_algorithm_circuit():
-    data = {
-        "recent_jobs": [
-            {
-                "job_id": "123",
-                "gate_histogram": {"id": 5, "cx": 25, "rz": 50} 
-            }
-        ]
-    }
+    data = {"recent_jobs": [{"job_id": "123", "gate_histogram": {"id": 5, "cx": 25, "rz": 50}}]}
     events = RULE_003_timing_oracle_job_pattern(data)
     assert len(events) == 0
+
+def test_rule_004_cross_tenant_id_probing():
+    data = {"failed_job_access_attempts": [1,2,3,4,5,6]}
+    events = RULE_004_cross_tenant_id_probing(data)
+    assert len(events) == 1
+    assert events[0].technique_id == "QTT009"
+
+def test_rule_005_resource_exhaustion_circuit():
+    data = {"recent_jobs": [{"depth": 90, "max_allowed_depth": 100}]}
+    events = RULE_005_resource_exhaustion_circuit(data)
+    assert len(events) == 1
+    assert events[0].technique_id == "QTT008"
 
 def test_rule_006_detects_sequential_404_idor_pattern():
     data = {"api_error_log": {"sequential_404_count": 12}}
@@ -84,12 +67,21 @@ def test_rule_006_detects_sequential_404_idor_pattern():
     assert events[0].technique_id == "QTT011"
     assert events[0].visual_effect == "vortex"
 
+def test_rule_007_token_scope_violation():
+    data = {"api_error_log": {"403_on_admin_count": 4}}
+    events = RULE_007_token_scope_violation(data)
+    assert len(events) == 1
+    assert events[0].technique_id == "QTT005"
+
+def test_rule_008_backend_health_anomaly():
+    data = {"baseline_calibration": {"0": {"t1_us": 100}}, "calibration": [{"qubit_id": 0, "t1_us": 50}]}
+    events = RULE_008_backend_health_anomaly(data)
+    assert len(events) == 1
+    assert events[0].technique_id == "HEALTH"
+
 def test_analyzer_deduplicates_same_technique_within_window():
     analyzer = ThreatAnalyzer()
-    data = {
-        "backend_id": "backend_1",
-        "api_error_log": {"sequential_404_count": 12}
-    }
+    data = {"backend_id": "backend_1", "api_error_log": {"sequential_404_count": 12}}
     
     events1 = analyzer.analyze(data)
     assert len(events1) == 1
@@ -106,11 +98,7 @@ def test_analyzer_sorts_by_severity_critical_first():
     data = {
         "backend_id": "backend_1",
         "api_error_log": {"sequential_404_count": 12},
-        "recent_jobs": [
-            {
-                "depth": 95, "max_allowed_depth": 100
-            }
-        ]
+        "recent_jobs": [{"depth": 95, "max_allowed_depth": 100}]
     }
     events = analyzer.analyze(data)
     assert len(events) == 2
@@ -121,10 +109,7 @@ def test_threat_events_all_have_valid_visual_effects():
     data = {
         "github_search_results": [{"pattern": "token='valid'"}],
         "api_access_log": {"calibration_requests_last_hour": 100, "job_submissions_last_hour": 10},
-        "recent_jobs": [
-            {"gate_histogram": {"id": 15, "cx": 2}},
-            {"depth": 95, "max_allowed_depth": 100}
-        ],
+        "recent_jobs": [{"gate_histogram": {"id": 15, "cx": 2}}, {"depth": 95, "max_allowed_depth": 100}],
         "failed_job_access_attempts": [1,2,3,4,5,6],
         "api_error_log": {"sequential_404_count": 12, "403_on_admin_count": 5},
         "calibration": [{"qubit_id": 0, "t1_us": 10}],
@@ -142,3 +127,28 @@ def test_threat_events_all_have_valid_visual_effects():
     
     for event in events:
         assert event.visual_effect in valid_effects
+
+def test_analyzer_adds_to_snapshot():
+    analyzer = ThreatAnalyzer()
+    
+    # Create empty snapshot
+    snapshot = SimulationSnapshot(
+        snapshot_id="empty-snapshot",
+        generated_at=datetime.now(timezone.utc),
+        backends=[],
+        threats=[],
+        entanglement_pairs=[],
+        total_qubits=0,
+        total_threats=0,
+        threats_by_severity={},
+        platform_health={}
+    )
+    
+    # Analyze with data that should trigger rule 006 (vortex) and 007
+    snapshot.api_error_log = {"sequential_404_count": 12, "403_on_admin_count": 5}
+    
+    enriched = analyzer.analyze(snapshot)
+    assert len(enriched.threats) == 2
+    assert enriched.total_threats == 2
+    assert enriched.threats_by_severity.get("critical") == 1
+    assert enriched.threats_by_severity.get("high") == 1
