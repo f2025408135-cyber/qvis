@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import time
 import json
 import structlog
 from contextlib import asynccontextmanager
@@ -19,9 +20,10 @@ logger = structlog.get_logger()
 
 latest_snapshot: Optional[SimulationSnapshot] = None
 analyzer = ThreatAnalyzer()
+github_scanner = None
 
 # Determine collector strategy based on environment config.
-if os.environ.get("PYTEST_CURRENT_TEST") or settings.demo_mode:
+if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("USE_MOCK") == "true" or settings.demo_mode:
     from backend.collectors.mock import MockCollector
     collector = MockCollector()
     if os.environ.get("PYTEST_CURRENT_TEST"):
@@ -31,6 +33,10 @@ elif settings.ibm_quantum_token:
     from backend.collectors.ibm import IBMQuantumCollector
     collector = IBMQuantumCollector(ibm_token=settings.ibm_quantum_token)
     logger.info("using_ibm_collector", backends="live")
+    if settings.github_token:
+        from backend.collectors.github_scanner import GitHubTokenScanner
+        github_scanner = GitHubTokenScanner(token=settings.github_token)
+        logger.info("using_github_scanner")
 else:
     from backend.collectors.mock import MockCollector
     logger.warning("no_token_configured_using_mock")
@@ -39,10 +45,34 @@ else:
 async def simulation_loop():
     """Background task continually refreshing telemetry and broadcasting state."""
     global latest_snapshot
+    github_last_run = 0
+    github_results = []
+    
     while True:
         try:
+            start = time.monotonic()
             snapshot = await collector.collect()
-            enriched_snapshot = analyzer.analyze(snapshot)
+            elapsed = time.monotonic() - start
+            
+            logger.info("collection_completed", source=collector.__class__.__name__, elapsed_ms=round(elapsed * 1000))
+            
+            # Integrate GitHub scanning selectively (every 5 minutes to respect rate limits)
+            if github_scanner and (time.time() - github_last_run > 300):
+                try:
+                    logger.info("running_github_scan")
+                    github_results = await github_scanner.scan_for_ibm_tokens()
+                    github_last_run = time.time()
+                except Exception as e:
+                    logger.error("github_scan_loop_error", error=str(e))
+                    
+            if github_results:
+                # Mock the structure required by Rule 001 dynamically integrating into payload
+                raw_dict = snapshot.model_dump()
+                raw_dict["github_search_results"] = github_results
+                enriched_snapshot = analyzer.analyze(raw_dict)
+            else:
+                enriched_snapshot = analyzer.analyze(snapshot)
+                
             latest_snapshot = enriched_snapshot
             await manager.broadcast_snapshot(enriched_snapshot)
             logger.info("snapshot_broadcasted", snapshot_id=enriched_snapshot.snapshot_id)
@@ -57,9 +87,7 @@ async def simulation_loop():
 async def lifespan(app: FastAPI):
     """Manages application startup and teardown routines."""
     
-    is_testing = bool(os.environ.get("PYTEST_CURRENT_TEST")) or "pytest" in os.environ.get("_", "")
-    
-    if is_testing:
+    if "pytest" in str(os.environ):
         logger.info("testing_mode_detected_skipping_loop")
         yield
         return
