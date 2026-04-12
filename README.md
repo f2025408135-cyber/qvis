@@ -8,7 +8,7 @@
 /_/    |___/_/____/  
 ```
 
-QVis is a real-time visual threat intelligence platform for quantum cloud infrastructure. It takes abstract security telemetry and renders the attack topology as a living 3D particle simulation in the browser. 
+QVis is a real-time visual threat intelligence platform for quantum cloud infrastructure. It takes abstract security telemetry from quantum platforms like IBM Quantum and renders the entire attack topology as a living 3D particle simulation in the browser. 
 
 The entire field of quantum security risk communication is broken. Security findings are just abstract JSON that no CISO, executive, or policymaker can look at and intuitively grasp. QVis makes quantum cloud attack surfaces visceral and immediately communicable to any audience.
 
@@ -39,31 +39,44 @@ QVis bridges this gap. By mapping the security telemetry to a physical simulatio
 6. In a new terminal, serve the frontend: `python -m http.server 3000 --directory frontend`
 7. Open `http://localhost:3000` in your browser.
 
+## Connecting to Real IBM Quantum
+
+By default, QVis runs in demo mode with mock data. To connect to real IBM Quantum backends:
+
+1. Get an API token from https://quantum.ibm.com/account
+2. Open your `.env` file.
+3. Set `DEMO_MODE=false` and `IBM_QUANTUM_TOKEN=your_token_here`
+4. Restart the backend
+
+### What Works with Real Data
+- ✅ Live backend calibration monitoring (T1, T2, readout error, gate error)
+- ✅ Real job history analysis (timing oracle detection, resource exhaustion)
+- ✅ Backend health anomaly detection
+- ✅ Credential exposure scanning (with GitHub token)
+
+### What Requires Internal Platform Access
+- ❌ Cross-tenant access pattern detection (no public audit log)
+- ❌ IDOR / unauthorized job access detection (no access logs)
+- ❌ Token scope violation detection (IBM internal)
+
 ## Architecture
 
-The system uses an asynchronous Python backend and a WebGL frontend.
+With real data enabled:
 
-```text
-+-------------------+       +-----------------------+
-|  Collectors       | ----> |     Threat Engine     |
-| (Mock IBM data)   |       | (backend/threat_engine) |
-+-------------------+       +-----------------------+
-                                        |
-                                        v
-+-------------------+       +-----------------------+
-| Three.js Visuals  | <---- |  FastAPI + WebSocket  |
-|  (frontend/sim)   |       |     (backend/api)     |
-+-------------------+       +-----------------------+
-```
+    IBM Quantum API ──┐
+                      ├──→ IBMQuantumCollector ──→ ThreatAnalyzer ──→ WebSocket ──→ Frontend
+    GitHub API ───────┘         (rules.py)                               (Three.js)
+
+With demo mode (default):
+
+    MockCollector (inline data) ──→ ThreatAnalyzer ──→ WebSocket ──→ Frontend
 
 ## Limitations & Roadmap
 
 Please note the current state of the application:
-- **IBM Quantum collector** is currently a stub (it collects backend metadata but no live threat data).
-- **Threat detection rules** run continuously but currently only evaluate against generated mock/simulated data.
+- **IBM Quantum collector** dynamically tracks metrics, however, specific endpoints mimicking internal access rules are stubbed since they aren't publicly fetchable.
 - **AWS Braket support** is planned but not currently implemented.
 - **No authentication** is present. This is designed strictly as a local demonstration tool.
-- "Real-time threat detection" in this release refers to *Demo threat detection with mock data*.
 
 ## Q-ATT&CK integration
 
