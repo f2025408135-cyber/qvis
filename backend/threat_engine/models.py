@@ -14,7 +14,6 @@ class Platform(str, Enum):
     ibm_quantum = "ibm_quantum"
     amazon_braket = "amazon_braket"
     azure_quantum = "azure_quantum"
-    ionq = "ionq"
 
 class QubitCalibration(BaseModel):
     qubit_id: int
