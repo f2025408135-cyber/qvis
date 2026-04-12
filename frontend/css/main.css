@@ -58,6 +58,8 @@ body {
     text-shadow: 0 0 15px rgba(255, 255, 255, 0.5);
 }
 
+.hud-status-container { display: flex; gap: 10px; }
+
 .status-pill { 
     padding: 6px 16px; border-radius: 12px; font-weight: bold; font-size: 13px; 
     backdrop-filter: blur(5px);
@@ -87,7 +89,7 @@ body {
 .threat-ticker { 
     position: absolute; bottom: 35px; left: 25px; right: 380px; 
     display: flex; gap: 15px; overflow-x: auto; padding-bottom: 10px; 
-    scrollbar-width: none; /* Hide scrollbar */
+    scrollbar-width: none;
 }
 
 .threat-tag { 
