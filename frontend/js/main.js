@@ -1,3 +1,4 @@
+import { appState } from './state.js';
 import { ParticleSystem } from './simulation/ParticleSystem.js';
 import { Backend } from './simulation/Backend.js';
 import { Controls } from './ui/Controls.js';
@@ -24,13 +25,11 @@ function init() {
     const canvas = document.getElementById('qvis-canvas');
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x020408);
-    // Add subtle fog to simulate density of deep space
     scene.fog = new THREE.FogExp2(0x020408, 0.0015);
 
     camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 3000);
     camera.position.set(0, 0, 600);
-    // Store camera globally for raycasting
-    window.__camera = camera;
+    appState.camera = camera;
 
     renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -38,10 +37,8 @@ function init() {
     renderer.toneMapping = THREE.ReinhardToneMapping;
     renderer.toneMappingExposure = 1.5;
 
-    // --- Post-Processing / Bloom ---
     const renderScene = new THREE.RenderPass(scene, camera);
     
-    // Resolution, strength, radius, threshold
     const bloomPass = new THREE.UnrealBloomPass(
         new THREE.Vector2(window.innerWidth, window.innerHeight),
         1.5, 0.4, 0.1
@@ -51,7 +48,6 @@ function init() {
     composer.addPass(renderScene);
     composer.addPass(bloomPass);
 
-    // Lights
     const ambientLight = new THREE.AmbientLight(0x0a0a20, 1.2);
     scene.add(ambientLight);
 
@@ -69,7 +65,6 @@ function init() {
 
     createStarField();
 
-    // Cinematic Grid
     const gridHelper = new THREE.GridHelper(2000, 50, 0x112244, 0x050a14);
     gridHelper.position.y = -250;
     scene.add(gridHelper);
@@ -79,7 +74,7 @@ function init() {
     entanglementRenderer = new EntanglementRenderer(scene);
     
     controls = new Controls(camera, canvas);
-    window.__controls = controls; // allow global access for camera animation overrides
+    appState.controls = controls;
     
     hud = new HUD(document.getElementById('hud'));
     threatPanel = new ThreatPanel(document.getElementById('threat-panel'));
@@ -87,7 +82,7 @@ function init() {
     
     stateMapper = new StateMapper();
 
-    const wsUrl = 'ws://127.0.0.1:8000/ws/simulation';
+    const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host || '127.0.0.1:8000'}/ws/simulation`;
     const wsClient = new WSClient(wsUrl, (snapshot) => {
         document.getElementById('loading').style.display = 'none';
         stateMapper.mapSnapshot(
@@ -128,7 +123,6 @@ function createStarField() {
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
     geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
 
-    // Custom shader for twinkling stars
     const material = new THREE.ShaderMaterial({
         uniforms: {
             time: { value: 0 }
@@ -149,7 +143,6 @@ function createStarField() {
                 vec2 xy = gl_PointCoord.xy - vec2(0.5);
                 float ll = length(xy);
                 if (ll > 0.5) discard;
-                // Soft glow edge
                 float alpha = (0.5 - ll) * 2.0;
                 gl_FragColor = vec4(0.6, 0.8, 1.0, alpha * 0.7);
             }
@@ -173,7 +166,6 @@ function onWindowResize() {
 function animate(time) {
     requestAnimationFrame(animate);
     
-    // Optional chaining to prevent undefined TWEEN if script failed to load
     if (window.TWEEN) window.TWEEN.update(time);
     
     time *= 0.001;
@@ -185,7 +177,7 @@ function animate(time) {
         starSystem.material.uniforms.time.value = time * 2.0;
     }
 
-    if (controls && !window.__isAnimatingCamera) controls.update();
+    if (controls && !appState.isAnimatingCamera) controls.update();
     
     backends.forEach(backend => backend.update(deltaTime, time));
     if (particleSystem) particleSystem.update(deltaTime);

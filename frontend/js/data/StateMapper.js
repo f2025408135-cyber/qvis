@@ -1,8 +1,10 @@
+import { appState } from '../state.js';
 import { Backend } from '../simulation/Backend.js';
 
 export class StateMapper {
     constructor() {
         this.previousEntanglements = new Set();
+        this.interactionsSetup = false;
     }
 
     mapSnapshot(snapshot, backendsMap, scene, particleSystem, threatVisualManager, entanglementRenderer, hud) {
@@ -89,8 +91,8 @@ export class StateMapper {
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
             
-            if(window.__camera) {
-                raycaster.setFromCamera(mouse, window.__camera);
+            if(appState.camera) {
+                raycaster.setFromCamera(mouse, appState.camera);
                 
                 const objectsToIntersect = [];
                 const meshToBackendId = new Map();
@@ -108,21 +110,18 @@ export class StateMapper {
                     const backend = backendsMap.get(backendId);
                     const threats = activeThreatsByBackend.get(backendId) || [];
                     
-                    // Trigger camera animation
                     this.flyToBackend(backend);
                     
                     document.dispatchEvent(new CustomEvent('openThreatPanel', { 
                         detail: { backend: backend, threats: threats } 
                     }));
                 } else {
-                    // Clicked on empty space
                     this.resetCamera();
                     document.getElementById('threat-panel').__vue__?.close();
                 }
             }
         });
 
-        // Also listen for clicking threat tags to fly to backend
         document.addEventListener('openThreatPanel', (e) => {
             if (e.detail.threat && e.detail.threat.backend_id) {
                 const backend = backendsMap.get(e.detail.threat.backend_id);
@@ -134,60 +133,57 @@ export class StateMapper {
     }
 
     flyToBackend(backend) {
-        if (!window.TWEEN || !window.__camera || !window.__controls) return;
+        if (!window.TWEEN || !appState.camera || !appState.controls) return;
         
-        window.__isAnimatingCamera = true;
+        appState.isAnimatingCamera = true;
         
         const targetPos = backend.position.clone();
         
-        // Target looks at backend
-        new TWEEN.Tween(window.__controls.target)
+        new TWEEN.Tween(appState.controls.target)
             .to({x: targetPos.x, y: targetPos.y, z: targetPos.z}, 1500)
             .easing(TWEEN.Easing.Cubic.InOut)
             .start();
             
-        // Calculate offset position for camera (slightly to the left to leave room for panel)
         const offset = new THREE.Vector3(targetPos.x - 80, targetPos.y + 40, targetPos.z + 120);
         
-        new TWEEN.Tween(window.__camera.position)
+        new TWEEN.Tween(appState.camera.position)
             .to({x: offset.x, y: offset.y, z: offset.z}, 1500)
             .easing(TWEEN.Easing.Cubic.InOut)
             .onUpdate(() => {
-                window.__camera.lookAt(window.__controls.target);
+                appState.camera.lookAt(appState.controls.target);
             })
             .onComplete(() => {
-                window.__isAnimatingCamera = false;
-                // Sync spherical coords back to controls
-                window.__controls.radius = window.__camera.position.distanceTo(window.__controls.target);
+                appState.isAnimatingCamera = false;
+                appState.controls.radius = appState.camera.position.distanceTo(appState.controls.target);
                 
-                const dir = new THREE.Vector3().subVectors(window.__camera.position, window.__controls.target).normalize();
-                window.__controls.phi = Math.acos(dir.y);
-                window.__controls.theta = Math.atan2(dir.z, dir.x);
+                const dir = new THREE.Vector3().subVectors(appState.camera.position, appState.controls.target).normalize();
+                appState.controls.phi = Math.acos(dir.y);
+                appState.controls.theta = Math.atan2(dir.z, dir.x);
             })
             .start();
     }
 
     resetCamera() {
-        if (!window.TWEEN || !window.__camera || !window.__controls) return;
+        if (!window.TWEEN || !appState.camera || !appState.controls) return;
         
-        window.__isAnimatingCamera = true;
+        appState.isAnimatingCamera = true;
         
-        new TWEEN.Tween(window.__controls.target)
+        new TWEEN.Tween(appState.controls.target)
             .to({x: 0, y: 0, z: 0}, 1500)
             .easing(TWEEN.Easing.Cubic.InOut)
             .start();
             
-        new TWEEN.Tween(window.__camera.position)
+        new TWEEN.Tween(appState.camera.position)
             .to({x: 0, y: 0, z: 600}, 1500)
             .easing(TWEEN.Easing.Cubic.InOut)
             .onUpdate(() => {
-                window.__camera.lookAt(window.__controls.target);
+                appState.camera.lookAt(appState.controls.target);
             })
             .onComplete(() => {
-                window.__isAnimatingCamera = false;
-                window.__controls.radius = 600;
-                window.__controls.phi = Math.PI / 2;
-                window.__controls.theta = Math.PI / 2;
+                appState.isAnimatingCamera = false;
+                appState.controls.radius = 600;
+                appState.controls.phi = Math.PI / 2;
+                appState.controls.theta = Math.PI / 2;
             })
             .start();
     }

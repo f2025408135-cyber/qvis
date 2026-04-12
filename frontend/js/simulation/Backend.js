@@ -63,11 +63,13 @@ export class Backend {
         this.label.position.y = -this.radius - 20;
         this.group.add(this.label);
 
+        // Deterministic layout instead of random Y
         const angle = (index / Math.max(totalBackends, 1)) * Math.PI * 2;
+        const layoutRadius = 150;
         this.group.position.set(
-            Math.cos(angle) * 150,
-            (Math.random() - 0.5) * 40,
-            Math.sin(angle) * 150
+            Math.cos(angle) * layoutRadius,
+            (index % 2 === 0 ? 25 : -25), // Staggered deterministic Y
+            Math.sin(angle) * layoutRadius
         );
         this.position = this.group.position.clone();
         

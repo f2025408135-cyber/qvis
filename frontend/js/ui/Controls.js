@@ -4,6 +4,7 @@ export class Controls {
         this.domElement = domElement;
         
         this.target = new THREE.Vector3();
+        this._target = new THREE.Vector3(); // Reusable vector to prevent per-frame allocation
         
         this.radius = 600;
         this.theta = Math.PI / 4;
@@ -89,9 +90,8 @@ export class Controls {
     }
     
     update() {
-        // Skip normal updates if TWEEN is driving the camera
-        if (window.__isAnimatingCamera) return;
-
+        // We handle skip logic upstream in main.js using appState
+        
         const timeSinceInteraction = performance.now() - this.lastInteractionTime;
         
         if (timeSinceInteraction > 10000 && !this.isDragging) {
@@ -102,7 +102,9 @@ export class Controls {
         const targetY = this.target.y + this.radius * Math.cos(this.phi);
         const targetZ = this.target.z + this.radius * Math.sin(this.phi) * Math.sin(this.theta);
         
-        this.camera.position.lerp(new THREE.Vector3(targetX, targetY, targetZ), 0.05);
+        this._target.set(targetX, targetY, targetZ); // Use pre-allocated vector to prevent GC pressure
+        
+        this.camera.position.lerp(this._target, 0.05);
         this.camera.lookAt(this.target);
     }
 }

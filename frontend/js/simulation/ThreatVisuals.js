@@ -17,6 +17,7 @@ export class ThreatVisualManager {
         
         switch (effectName) {
             case "timing_ring":
+                // Pre-allocate geometry to avoid memory leaks
                 const ringGeo = new THREE.RingGeometry(backend.radius * 1.2, backend.radius * 1.5, 32);
                 const ringMat = new THREE.MeshBasicMaterial({
                     color: 0xff6622,
@@ -35,7 +36,8 @@ export class ThreatVisualManager {
                     baseRadius: backend.radius * 1.2,
                     maxRadius: backend.radius * 3.5,
                     currentRadius: backend.radius * 1.2,
-                    intensity: intensity
+                    intensity: intensity,
+                    progress: 0.0 // Track expansion progress instead of reallocating
                 });
                 break;
                 
@@ -155,13 +157,14 @@ export class ThreatVisualManager {
         this.activeEffects.forEach((data, backendId) => {
             data.objects.forEach(obj => {
                 if (obj.type === 'expanding_ring') {
-                    obj.currentRadius += deltaTime * 50;
-                    if (obj.currentRadius > obj.maxRadius) {
-                        obj.currentRadius = obj.baseRadius;
-                    }
-                    obj.mesh.geometry.dispose();
-                    obj.mesh.geometry = new THREE.RingGeometry(obj.currentRadius, obj.currentRadius + 5, 32);
-                    obj.mesh.material.opacity = (1.0 - (obj.currentRadius - obj.baseRadius) / (obj.maxRadius - obj.baseRadius)) * obj.intensity;
+                    // Update progress and use scale instead of recreating geometry
+                    obj.progress += deltaTime * 1.5; // Scale speed
+                    if (obj.progress > 1.0) obj.progress = 0.0;
+                    
+                    // Scale from 1.0 to roughly 3x
+                    const scale = 1.0 + (obj.progress * 2.0);
+                    obj.mesh.scale.set(scale, scale, 1);
+                    obj.mesh.material.opacity = (1.0 - obj.progress) * obj.intensity;
                 } 
                 else if (obj.type === 'rotating_funnel') {
                     obj.mesh.rotation.y += deltaTime * 2;
