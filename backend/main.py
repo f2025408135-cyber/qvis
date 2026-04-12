@@ -1,5 +1,6 @@
 import asyncio
 import os
+import json
 import structlog
 from contextlib import asynccontextmanager
 from typing import List, Optional
@@ -102,26 +103,33 @@ async def get_threat_detail(threat_id: str):
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
-        # Prevent broadcast storm: send only to the connecting client
         if latest_snapshot:
-            await websocket.send_text(latest_snapshot.model_dump_json())
+            await manager.send_personal_message(latest_snapshot.model_dump_json(), websocket)
         else:
             snapshot = analyzer.analyze(await collector.collect())
-            await websocket.send_text(snapshot.model_dump_json())
+            await manager.send_personal_message(snapshot.model_dump_json(), websocket)
             
         while True:
-            # Handle incoming messages from the client
-            data = await websocket.receive_json()
-            msg_type = data.get("type")
-            if msg_type == "get_snapshot":
-                if latest_snapshot:
-                    await websocket.send_text(latest_snapshot.model_dump_json())
-            elif msg_type == "focus_backend":
-                backend_id = data.get("backend_id")
-                # Stub for more complex interaction
-                logger.info("client_focus_backend", backend_id=backend_id)
-            else:
-                logger.warning("unknown_websocket_message", message=data)
+            data = await websocket.receive_text()
+            try:
+                msg = json.loads(data)
+                msg_type = msg.get("type")
+                if msg_type == "get_snapshot":
+                    if latest_snapshot:
+                        await manager.send_personal_message(latest_snapshot.model_dump_json(), websocket)
+                elif msg_type == "focus_backend":
+                    backend_id = msg.get("backend_id")
+                    logger.info("client_focus_backend", backend_id=backend_id)
+                    # Respond with backend info if requested
+                    if latest_snapshot:
+                        for b in latest_snapshot.backends:
+                            if b.id == backend_id:
+                                await manager.send_personal_message(json.dumps({"type": "backend_focus_ack", "backend": b.model_dump()}), websocket)
+                                break
+                else:
+                    logger.warning("unknown_websocket_message", message=msg)
+            except json.JSONDecodeError:
+                logger.warning("invalid_json_websocket_message", raw=data)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:

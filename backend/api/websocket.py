@@ -21,6 +21,13 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
             logger.info("websocket_disconnected", total_connections=len(self.active_connections))
 
+    async def send_personal_message(self, message: str, websocket: WebSocket):
+        try:
+            await websocket.send_text(message)
+        except Exception as e:
+            logger.error("websocket_send_error", error=str(e))
+            self.disconnect(websocket)
+
     async def broadcast(self, message: str):
         for connection in self.active_connections:
             try:
