@@ -8,7 +8,7 @@
 /_/    |___/_/____/  
 ```
 
-QVis is a real-time visual threat intelligence platform for quantum cloud infrastructure. It takes abstract security telemetry from quantum platforms like IBM Quantum and Amazon Braket, and renders the entire attack topology as a living 3D particle simulation in the browser. 
+QVis is a real-time visual threat intelligence platform for quantum cloud infrastructure. It takes abstract security telemetry and renders the attack topology as a living 3D particle simulation in the browser. 
 
 The entire field of quantum security risk communication is broken. Security findings are just abstract JSON that no CISO, executive, or policymaker can look at and intuitively grasp. QVis makes quantum cloud attack surfaces visceral and immediately communicable to any audience.
 
@@ -41,26 +41,29 @@ QVis bridges this gap. By mapping the security telemetry to a physical simulatio
 
 ## Architecture
 
+The system uses an asynchronous Python backend and a WebGL frontend.
+
 ```text
-+----------------+       +-------------------+       +-----------------------+
-| IBM Quantum API| ----> |     Collectors    | ----> |     Threat Engine     |
-|   Braket API   |       | (backend/collectors)|     | (backend/threat_engine) |
-+----------------+       +-------------------+       +-----------------------+
-                                                              |
-                                                              v
-+----------------+       +-------------------+       +-----------------------+
-|   Browser UI   | <---- | Three.js Visuals  | <---- |  FastAPI + WebSocket  |
-|  (frontend/UI) |       | (frontend/sim)    |       |     (backend/api)     |
-+----------------+       +-------------------+       +-----------------------+
++-------------------+       +-----------------------+
+|  Collectors       | ----> |     Threat Engine     |
+| (Mock IBM data)   |       | (backend/threat_engine) |
++-------------------+       +-----------------------+
+                                        |
+                                        v
++-------------------+       +-----------------------+
+| Three.js Visuals  | <---- |  FastAPI + WebSocket  |
+|  (frontend/sim)   |       |     (backend/api)     |
++-------------------+       +-----------------------+
 ```
 
-## Connecting real platforms
+## Limitations & Roadmap
 
-By default, QVis runs in `DEMO_MODE` using simulated data. To connect to real platforms:
-1. Set `DEMO_MODE=false` in `.env`.
-2. Add your `IBM_QUANTUM_TOKEN` for IBM Quantum integration.
-3. Add your `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for Amazon Braket integration.
-4. Add your `AZURE_QUANTUM_SUBSCRIPTION_ID` for Azure Quantum integration.
+Please note the current state of the application:
+- **IBM Quantum collector** is currently a stub (it collects backend metadata but no live threat data).
+- **Threat detection rules** run continuously but currently only evaluate against generated mock/simulated data.
+- **AWS Braket support** is planned but not currently implemented.
+- **No authentication** is present. This is designed strictly as a local demonstration tool.
+- "Real-time threat detection" in this release refers to *Demo threat detection with mock data*.
 
 ## Q-ATT&CK integration
 
