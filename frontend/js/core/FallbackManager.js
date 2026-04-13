@@ -208,5 +208,5 @@ class FallbackManager {
 
 // Singleton
 export const fallbackManager = new FallbackManager();
-export { FALLBACK_STATE };
+export { FALLBACK_STATE, FallbackManager };
 export default FallbackManager;

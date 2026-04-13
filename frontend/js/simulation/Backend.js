@@ -3,6 +3,12 @@ export class Backend {
         this.id = backendData.id;
         this.scene = scene;
         this.num_qubits = backendData.num_qubits;
+        this.platform = backendData.platform;
+        this.name = backendData.name;
+        this.is_simulator = backendData.is_simulator;
+        this.calibration = backendData.calibration || [];
+        this.api_surface_score = backendData.api_surface_score || 0;
+        this.data = backendData; // Keep full data for detail overlay
         
         this.baseColor = this.getColorForPlatform(backendData.platform, backendData.is_simulator);
         this.radius = Math.sqrt(this.num_qubits) * 1.8;
@@ -77,14 +83,26 @@ export class Backend {
         this.setThreatLevel(backendData.threat_level || 'none');
     }
 
+    /**
+     * Static helper: returns the canonical color for a given platform string.
+     * Can be used from Legend, ThreatPanel, or any module that needs platform colors.
+     */
+    static getPlatformColor(platform) {
+        switch(platform) {
+            case 'ibm_quantum':  return 0x2255bb;   // Blue/cyan glow
+            case 'amazon_braket': return 0x8844ff;   // Purple/violet glow
+            case 'azure_quantum': return 0x44ff88;   // Green glow
+            default:              return 0x555555;
+        }
+    }
+
+    /**
+     * Instance method: returns the display color for this backend's platform.
+     * Simulators always get a muted steel-blue regardless of platform.
+     */
     getColorForPlatform(platform, is_simulator) {
         if (is_simulator) return 0x335577;
-        switch(platform) {
-            case 'ibm_quantum': return 0x2255bb;
-            case 'amazon_braket': return 0x22aaff;
-            case 'azure_quantum': return 0x0078d4;
-            default: return 0x555555;
-        }
+        return Backend.getPlatformColor(platform);
     }
 
     setThreatLevel(severity) {

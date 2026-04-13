@@ -182,6 +182,9 @@ export class StateMapper {
                         document.dispatchEvent(new CustomEvent('openThreatPanel', {
                             detail: { backend: backend, threats: threats }
                         }));
+                        document.dispatchEvent(new CustomEvent('backendSelected', {
+                            detail: { backend: backend, threats: threats }
+                        }));
                     }
                 } else {
                     this.resetCamera();

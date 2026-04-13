@@ -14,6 +14,7 @@ import { ThreatVisualManager } from './simulation/ThreatVisuals.js';
 import { HUD } from './ui/HUD.js';
 import { ThreatPanel } from './ui/ThreatPanel.js';
 import { Legend } from './ui/Legend.js';
+import { Timeline } from './ui/Timeline.js';
 import { FallbackManager, FALLBACK_STATE } from './core/FallbackManager.js';
 import { toastManager } from './core/ToastManager.js';
 import { perfMonitor } from './core/PerformanceMonitor.js';
@@ -27,7 +28,7 @@ let particleSystem;
 let threatVisualManager;
 let entanglementRenderer;
 let stateMapper;
-let hud, threatPanel, legend;
+let hud, threatPanel, legend, timeline;
 let canvas2d = null;
 let useWebGL = true;
 
@@ -117,9 +118,13 @@ function bootstrap() {
         hud = new HUD(document.getElementById('hud'));
         threatPanel = new ThreatPanel(document.getElementById('threat-panel'));
         legend = new Legend(document.getElementById('legend'));
+        timeline = new Timeline(document.getElementById('timeline'));
 
         // Initialize performance monitor
         perfMonitor.init();
+
+        // Backend detail overlay
+        initBackendDetailOverlay();
 
         // Stage 4: Connect WebSocket
         updateLoadingStage(LOADING_STAGES.CONNECTING);
@@ -226,7 +231,9 @@ function initCanvas2D(fallbackManager) {
 }
 
 function initWebSocket(fallbackManager) {
-    const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host || '127.0.0.1:8000'}/ws/simulation`;
+    const backendHost = location.port === '3000' ? '127.0.0.1:8000' : (location.host || '127.0.0.1:8000');
+    const wsToken = window.__QVIS_WS_TOKEN || '';
+    const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${backendHost}/ws/simulation${wsToken ? '?token=' + wsToken : ''}`;
     let firstSnapshotReceived = false;
 
     const wsClient = new WSClient(wsUrl, (snapshot) => {
@@ -253,6 +260,11 @@ function initWebSocket(fallbackManager) {
         } else if (canvas2d) {
             canvas2d.updateData(snapshot);
         }
+
+        // Notify UI components of snapshot update
+        document.dispatchEvent(new CustomEvent('snapshotUpdate', {
+            detail: snapshot
+        }));
     });
 
     // Connection state changes
@@ -466,6 +478,141 @@ function initKeyboardShortcuts() {
                 // Show keyboard shortcuts help
                 toastManager.info('ESC: Close panel | R: Reset | Space: Pause rotate | +/-: Zoom | Ctrl+F: FPS | H: Toggle HUD', 8000);
                 break;
+        }
+    });
+}
+
+// ─── Backend Detail Overlay ─────────────────────────────────────
+
+function initBackendDetailOverlay() {
+    // Create overlay container if it doesn't exist
+    let overlay = document.getElementById('backend-detail-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'backend-detail-overlay';
+        overlay.style.cssText = `
+            display: none;
+            position: fixed;
+            top: 80px;
+            left: 20px;
+            z-index: 150;
+            background: rgba(10, 10, 20, 0.92);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px;
+            padding: 20px 24px;
+            color: #e0e0e0;
+            font-family: monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            min-width: 280px;
+            max-width: 360px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            pointer-events: auto;
+        `;
+        document.body.appendChild(overlay);
+    }
+
+    // Create close button
+    const closeBtn = document.createElement('div');
+    closeBtn.id = 'backend-detail-close';
+    closeBtn.textContent = '✕';
+    closeBtn.style.cssText = `
+        position: absolute; top: 8px; right: 12px; cursor: pointer;
+        color: #667; font-size: 16px;
+    `;
+    overlay.appendChild(closeBtn);
+
+    // Close on click
+    closeBtn.addEventListener('click', () => { overlay.style.display = 'none'; });
+
+    // Create content area
+    const content = document.createElement('div');
+    content.id = 'backend-detail-content';
+    overlay.appendChild(content);
+
+    // Listen for backendSelected events
+    document.addEventListener('backendSelected', (e) => {
+        const { backend, threats } = e.detail;
+        if (!backend) return;
+
+        const b = backend;
+        const platformColor = Backend.getPlatformColor(b.platform);
+        const hexColor = '#' + platformColor.toString(16).padStart(6, '0');
+
+        // Format calibration summary
+        let calSummary = 'N/A';
+        if (b.calibration && b.calibration.length > 0) {
+            const c = b.calibration[0];
+            calSummary = `T1: ${c.t1_us ? c.t1_us.toFixed(1) : '?'}µs | T2: ${c.t2_us ? c.t2_us.toFixed(1) : '?'}µs | RO Err: ${c.readout_error !== undefined ? (c.readout_error * 100).toFixed(2) + '%' : '?'}`;
+        }
+
+        // Threat summary
+        const threatCount = (threats || []).length;
+        const threatList = (threats || []).slice(0, 5).map(t => {
+            const sevColor = { critical: '#ff3333', high: '#ff7722', medium: '#ffbb00', low: '#33cc66', info: '#4488cc' }[t.severity] || '#888';
+            return `<div style="display:flex;gap:6px;align-items:center;"><span style="color:${sevColor};">●</span> <span style="color:#aaa;font-size:10px;">${t.technique_id}</span></div>`;
+        }).join('');
+
+        content.innerHTML = `
+            <div style="margin-bottom:12px;">
+                <div style="font-size:14px;font-weight:bold;color:#fff;margin-bottom:2px;">${b.name || b.id}</div>
+                <div style="font-size:10px;color:#667;letter-spacing:1px;">${b.platform || 'unknown'}${b.is_simulator ? ' (SIMULATOR)' : ''}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${hexColor};box-shadow:0 0 8px ${hexColor}44;"></span>
+                <span style="color:${hexColor};font-size:11px;">${b.platform === 'ibm_quantum' ? 'IBM Quantum' : b.platform === 'amazon_braket' ? 'Amazon Braket' : b.platform === 'azure_quantum' ? 'Azure Quantum' : b.platform}</span>
+            </div>
+            <table style="width:100%;border-collapse:collapse;margin-bottom:12px;">
+                <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+                    <td style="padding:3px 8px 3px 0;color:#667;">Qubits</td>
+                    <td style="color:#ccd;">${b.num_qubits}</td>
+                </tr>
+                <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+                    <td style="padding:3px 8px 3px 0;color:#667;">Calibration</td>
+                    <td style="color:#ccd;font-size:10px;">${calSummary}</td>
+                </tr>
+                <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+                    <td style="padding:3px 8px 3px 0;color:#667;">Threat Level</td>
+                    <td style="color:${{ critical: '#ff3333', high: '#ff7722', medium: '#ffbb00', low: '#33cc66', none: '#556', info: '#4488cc' }[b.threatLevel || 'none'] || '#888'};">${(b.threatLevel || 'none').toUpperCase()}</td>
+                </tr>
+                <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+                    <td style="padding:3px 8px 3px 0;color:#667;">Active Threats</td>
+                    <td style="color:${threatCount > 0 ? '#ff7722' : '#556'};">${threatCount}</td>
+                </tr>
+                <tr>
+                    <td style="padding:3px 8px 3px 0;color:#667;">API Surface Score</td>
+                    <td style="color:#ccd;">${b.api_surface_score !== undefined ? (b.api_surface_score * 100).toFixed(0) + '%' : 'N/A'}</td>
+                </tr>
+            </table>
+            ${threatCount > 0 ? `
+                <div style="font-size:10px;color:#667;letter-spacing:1px;margin-bottom:6px;">ACTIVE THREATS</div>
+                <div style="display:flex;flex-direction:column;gap:3px;">${threatList}</div>
+                ${threatCount > 5 ? `<div style="color:#556;font-size:9px;margin-top:4px;">+ ${threatCount - 5} more</div>` : ''}
+            ` : ''}
+        `;
+
+        overlay.style.display = 'block';
+    });
+
+    // Close overlay on Escape (also handled by keyboard shortcuts)
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            overlay.style.display = 'none';
+        }
+    });
+
+    // Close overlay when clicking on the canvas background (not on a backend)
+    document.addEventListener('click', (e) => {
+        if (e.target.id === 'qvis-canvas') {
+            // Let StateMapper handle the backend click logic; overlay closes
+            // via its own logic when no backend is hit (small delay)
+            setTimeout(() => {
+                // Only auto-close if the click didn't result in a selection
+                const hitPanel = document.getElementById('threat-panel');
+                if (hitPanel && !hitPanel.classList.contains('open')) {
+                    overlay.style.display = 'none';
+                }
+            }, 50);
         }
     });
 }

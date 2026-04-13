@@ -191,6 +191,63 @@ def RULE_008_backend_health_anomaly(data: Dict[str, Any]) -> List[ThreatEvent]:
                 ))
     return events
 
+def RULE_009_concurrent_multi_backend_probing(data: Dict[str, Any]) -> List[ThreatEvent]:
+    """Detect concurrent access to multiple backends from same source."""
+    jobs = data.get('recent_jobs', [])
+    backends_accessed = set()
+    for job in jobs:
+        bid = job.get('backend_id', '')
+        if bid:
+            backends_accessed.add(bid)
+
+    if len(backends_accessed) >= 3:
+        return [ThreatEvent(
+            id=str(uuid.uuid4()),
+            technique_id="QTT012",
+            technique_name="Multi-Backend Reconnaissance",
+            severity=Severity.high,
+            platform=Platform(data.get('platform', 'ibm_quantum')),
+            backend_id=data.get('backend_id'),
+            title="Concurrent multi-backend probing detected",
+            description=f"Activity detected across {len(backends_accessed)} backends simultaneously.",
+            evidence={"backends_accessed": list(backends_accessed)},
+            detected_at=datetime.now(timezone.utc),
+            visual_effect="color_bleed",
+            visual_intensity=min(len(backends_accessed) / 5, 1.0),
+            remediation=["Investigate user for coordinated reconnaissance."]
+        )]
+    return []
+
+def RULE_010_anomalous_circuit_composition(data: Dict[str, Any]) -> List[ThreatEvent]:
+    """Detect circuits with unusual gate compositions that don't match known algorithms."""
+    jobs = data.get('recent_jobs', [])
+    for job in jobs:
+        hist = job.get('gate_histogram', {})
+        total = sum(hist.values())
+        if total < 5:
+            continue
+
+        measure_count = hist.get('measure', 0)
+        measure_ratio = measure_count / max(total, 1)
+
+        if measure_ratio > 0.5 and total > 10:
+            return [ThreatEvent(
+                id=str(uuid.uuid4()),
+                technique_id="QTT013",
+                technique_name="Anomalous Circuit",
+                severity=Severity.medium,
+                platform=Platform(data.get('platform', 'ibm_quantum')),
+                backend_id=data.get('backend_id'),
+                title="Anomalous circuit composition detected",
+                description="Circuit has unusually high measurement-to-gate ratio suggesting data exfiltration.",
+                evidence={"gate_histogram": hist, "measure_ratio": round(measure_ratio, 3)},
+                detected_at=datetime.now(timezone.utc),
+                visual_effect="interference",
+                visual_intensity=measure_ratio,
+                remediation=["Review circuit purpose and user intent."]
+            )]
+    return []
+
 ALL_RULES = [
     RULE_001_credential_leak_github_search,
     RULE_002_calibration_harvest_rate,
@@ -199,5 +256,7 @@ ALL_RULES = [
     RULE_005_resource_exhaustion_circuit,
     RULE_006_ip_extraction_idor,
     RULE_007_token_scope_violation,
-    RULE_008_backend_health_anomaly
+    RULE_008_backend_health_anomaly,
+    RULE_009_concurrent_multi_backend_probing,
+    RULE_010_anomalous_circuit_composition,
 ]

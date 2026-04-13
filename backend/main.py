@@ -4,25 +4,80 @@ import asyncio
 import os
 import time
 import json
+import logging
 import structlog
 from contextlib import asynccontextmanager
 from typing import List, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.config import settings
 from backend.api.websocket import manager
+from backend.api.auth import verify_api_key, _hash_key, _get_hashed_key
+from backend.api.security_headers import SecurityHeadersMiddleware
+from backend.api.ratelimit import RateLimitMiddleware
 from backend.threat_engine.analyzer import ThreatAnalyzer
+from backend.threat_engine.correlator import ThreatCorrelator
 from backend.threat_engine.models import SimulationSnapshot, BackendNode, ThreatEvent, Severity
 
+# ─── Logging Configuration ─────────────────────────────────────────────
+def _configure_logging():
+    """Configure structlog based on settings."""
+    log_level = settings.log_level.upper()
+    log_format = settings.log_format
+
+    # Map string level to Python logging constant
+    level_map = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
+    }
+    level = level_map.get(log_level, logging.INFO)
+
+    logging.basicConfig(
+        format="%(message)s",
+        level=level,
+    )
+
+    if log_format == "json":
+        structlog.configure(
+            processors=[
+                structlog.contextvars.merge_contextvars,
+                structlog.processors.add_log_level,
+                structlog.processors.JSONRenderer(),
+            ],
+            wrapper_class=structlog.make_filtering_bound_logger(level),
+            context_class=dict,
+            logger_factory=structlog.PrintLoggerFactory(),
+            cache_logger_on_first_use=True,
+        )
+    else:
+        structlog.configure(
+            processors=[
+                structlog.contextvars.merge_contextvars,
+                structlog.processors.add_log_level,
+                structlog.dev.ConsoleRenderer(),
+            ],
+            wrapper_class=structlog.make_filtering_bound_logger(level),
+            context_class=dict,
+            logger_factory=structlog.PrintLoggerFactory(),
+            cache_logger_on_first_use=True,
+        )
+
+
+_configure_logging()
 logger = structlog.get_logger()
 
+# ─── Application State ─────────────────────────────────────────────────
 latest_snapshot: Optional[SimulationSnapshot] = None
 analyzer = ThreatAnalyzer()
+correlator = ThreatCorrelator()
 github_scanner = None
 
-# Determine collector strategy based on environment config.
+# ─── Collector Strategy ────────────────────────────────────────────────
 if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("USE_MOCK") == "true" or settings.demo_mode:
     from backend.collectors.mock import MockCollector
     collector = MockCollector()
@@ -42,20 +97,21 @@ else:
     logger.warning("no_token_configured_using_mock")
     collector = MockCollector()
 
+# ─── Background Simulation Loop ────────────────────────────────────────
 async def simulation_loop():
     """Background task continually refreshing telemetry and broadcasting state."""
     global latest_snapshot
     github_last_run = 0
     github_results = []
-    
+
     while True:
         try:
             start = time.monotonic()
             snapshot = await collector.collect()
             elapsed = time.monotonic() - start
-            
+
             logger.info("collection_completed", source=collector.__class__.__name__, elapsed_ms=round(elapsed * 1000))
-            
+
             # Integrate GitHub scanning selectively (every 5 minutes to respect rate limits)
             if github_scanner and (time.time() - github_last_run > 300):
                 try:
@@ -64,16 +120,30 @@ async def simulation_loop():
                     github_last_run = time.time()
                 except Exception as e:
                     logger.error("github_scan_loop_error", error=str(e))
-                    
+
             if github_results:
-                # Mock the structure required by Rule 001 dynamically integrating into payload
                 raw_dict = snapshot.model_dump()
                 raw_dict["github_search_results"] = github_results
                 enriched_snapshot = analyzer.analyze(raw_dict)
             else:
                 enriched_snapshot = analyzer.analyze(snapshot)
-                
+
             latest_snapshot = enriched_snapshot
+
+            # Run cross-rule correlation on new threats
+            campaign_events = correlator.correlate(enriched_snapshot.threats)
+            if campaign_events:
+                for ce in campaign_events:
+                    analyzer.active_threats[(ce.backend_id, ce.technique_id)] = ce
+                enriched_snapshot.threats.extend(campaign_events)
+                enriched_snapshot.threats.sort(
+                    key=lambda x: {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}.get(
+                        x.severity.value if hasattr(x.severity, "value") else str(x.severity), 99
+                    )
+                )
+                enriched_snapshot.total_threats = len(enriched_snapshot.threats)
+                logger.info("campaigns_detected", count=len(campaign_events))
+
             await manager.broadcast_snapshot(enriched_snapshot)
             logger.info("snapshot_broadcasted", snapshot_id=enriched_snapshot.snapshot_id)
             await asyncio.sleep(settings.update_interval_seconds)
@@ -83,31 +153,34 @@ async def simulation_loop():
             logger.error("simulation_loop_error", error=str(e))
             await asyncio.sleep(5)
 
+# ─── Lifespan ──────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manages application startup and teardown routines."""
-    
+
     if "pytest" in str(os.environ):
         logger.info("testing_mode_detected_skipping_loop")
         yield
         return
-        
+
     logger.info("starting_simulation_loop")
     task = asyncio.create_task(simulation_loop())
-    
+
     global latest_snapshot
     try:
         latest_snapshot = analyzer.analyze(await collector.collect())
     except Exception as e:
         logger.error("initial_snapshot_error", error=str(e))
-        
+
     yield
-    
+
     task.cancel()
     logger.info("shutting_down_simulation_loop")
 
+# ─── FastAPI App ───────────────────────────────────────────────────────
 app = FastAPI(title="QVis API", lifespan=lifespan)
 
+# Middleware order: CORS → Rate Limit → Security Headers
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[os.getenv("CORS_ORIGINS", "http://localhost:3000")],
@@ -115,7 +188,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
+# ─── Health Endpoint (not behind auth) ────────────────────────────────
 @app.get("/api/health")
 async def health_check():
     """Validates the API is responsive and running."""
@@ -123,36 +199,41 @@ async def health_check():
         "status": "ok",
         "demo_mode": settings.demo_mode,
         "active_collector": "mock" if type(collector).__name__ == "MockCollector" else "ibm_quantum",
-        "connected_platforms": ["mock"] if settings.demo_mode else ["ibm_quantum"] if settings.ibm_quantum_token else []
+        "connected_platforms": ["mock"] if settings.demo_mode else ["ibm_quantum"] if settings.ibm_quantum_token else [],
     }
 
+# ─── Snapshot / Threat Endpoints (auth-optional) ──────────────────────
 async def _ensure_snapshot():
     global latest_snapshot
     if latest_snapshot is None:
         latest_snapshot = analyzer.analyze(await collector.collect())
     return latest_snapshot
 
+
 @app.get("/api/snapshot", response_model=SimulationSnapshot)
-async def get_snapshot():
+async def get_snapshot(_auth: None = Depends(verify_api_key)):
     """Returns the most recent fully resolved simulation state."""
     return await _ensure_snapshot()
 
+
 @app.get("/api/backends", response_model=List[BackendNode])
-async def get_backends():
+async def get_backends(_auth: None = Depends(verify_api_key)):
     """Returns the list of all currently tracked quantum backends."""
     snapshot = await _ensure_snapshot()
     return snapshot.backends
 
+
 @app.get("/api/threats", response_model=List[ThreatEvent])
-async def get_threats(severity: Optional[Severity] = None):
+async def get_threats(severity: Optional[Severity] = None, _auth: None = Depends(verify_api_key)):
     """Returns a list of active threat detections."""
     snapshot = await _ensure_snapshot()
     if severity:
         return [t for t in snapshot.threats if t.severity == severity]
     return snapshot.threats
 
+
 @app.get("/api/threat/{threat_id}", response_model=ThreatEvent)
-async def get_threat_detail(threat_id: str):
+async def get_threat_detail(threat_id: str, _auth: None = Depends(verify_api_key)):
     """Retrieves deeply detailed evidence and remediation for a specific threat."""
     snapshot = await _ensure_snapshot()
     for threat in snapshot.threats:
@@ -160,14 +241,67 @@ async def get_threat_detail(threat_id: str):
             return threat
     raise HTTPException(status_code=404, detail="Threat not found")
 
+# ─── STIX Export Endpoint ──────────────────────────────────────────────
+@app.get("/api/threats/export/stix", tags=["threats"])
+async def export_threats_stix(_auth: None = Depends(verify_api_key)):
+    """Export all active threats as a STIX 2.1 Bundle for SIEM integration."""
+    snapshot = await _ensure_snapshot()
+    from backend.api.export import export_stix_bundle
+    return export_stix_bundle(snapshot.threats)
+
+# ─── Threat History Endpoint ───────────────────────────────────────────
+@app.get("/api/threats/history", tags=["threats"])
+async def get_threat_history(_auth: None = Depends(verify_api_key)):
+    """Returns deduplicated threat history from the analyzer."""
+    return [
+        t.model_dump() for t in analyzer.active_threats.values()
+    ]
+
+# ─── Scenario Endpoints ──────────────────────────────────────────────
+active_scenario = {"name": None}
+
+@app.post("/api/scenario/load")
+async def load_scenario(name: str, _auth: None = Depends(verify_api_key)):
+    """Load a pre-recorded attack scenario for playback."""
+    global collector, active_scenario
+    from backend.collectors.scenario import ScenarioCollector
+    scenario = ScenarioCollector()
+    if scenario.load_scenario(name):
+        collector = scenario
+        active_scenario["name"] = name
+        analyzer.reset()
+        correlator.reset()
+        logger.info("scenario_loaded", scenario=name)
+        return {"status": "loaded", "scenario": name}
+    raise HTTPException(status_code=400, detail=f"Unknown scenario: {name}")
+
+@app.get("/api/scenario/list")
+async def list_scenarios():
+    """List all available scenario names."""
+    from backend.collectors.scenario import SCENARIOS
+    return {"scenarios": list(SCENARIOS.keys())}
+
+# ─── WebSocket Endpoint (with optional auth) ──────────────────────────
 @app.websocket("/ws/simulation")
 async def websocket_endpoint(websocket: WebSocket):
     """Manages full duplex connection handling for live telemetry streams."""
+    # WebSocket auth via query param: ws://host/ws/simulation?token=<key>
+    if settings.auth_enabled:
+        token = websocket.query_params.get("token")
+        if not token or not settings.api_key:
+            await websocket.close(code=4001, reason="Authentication required")
+            return
+        import secrets as _secrets
+        expected_hash = _get_hashed_key()
+        if not expected_hash or not _secrets.compare_digest(_hash_key(token), expected_hash):
+            await websocket.close(code=4003, reason="Invalid token")
+            return
+
     await manager.connect(websocket)
     try:
         snapshot = await _ensure_snapshot()
         await manager.send_personal_message(snapshot.model_dump_json(), websocket)
-            
+
         while True:
             data = await websocket.receive_text()
             try:
@@ -182,7 +316,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     snap = await _ensure_snapshot()
                     for b in snap.backends:
                         if b.id == backend_id:
-                            await manager.send_personal_message(json.dumps({"type": "backend_focus_ack", "backend": b.model_dump()}), websocket)
+                            await manager.send_personal_message(
+                                json.dumps({"type": "backend_focus_ack", "backend": b.model_dump()}),
+                                websocket,
+                            )
                             break
                 else:
                     logger.warning("unknown_websocket_message", message=msg)
@@ -193,3 +330,27 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.error("websocket_error", error=str(e))
         manager.disconnect(websocket)
+
+# ─── Frontend Static File Serving ─────────────────────────────────────
+@app.get("/{full_path:path}")
+async def serve_frontend(full_path: str):
+    """Serves the SPA frontend files. Rejects null bytes."""
+    if "\x00" in full_path:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    from pathlib import Path
+    frontend_dir = Path(__file__).parent.parent / "frontend"
+
+    if full_path and (frontend_dir / full_path).is_file():
+        return JSONResponse(
+            status_code=200,
+            content={},
+            headers={"X-Accel-Redirect": f"/frontend/{full_path}"},
+        ) if False else (frontend_dir / full_path).read_text()
+
+    # SPA fallback: serve index.html for any unmatched route
+    index_file = frontend_dir / "index.html"
+    if index_file.is_file():
+        from starlette.responses import FileResponse
+        return FileResponse(index_file)
+    raise HTTPException(status_code=404, detail="Frontend not found")

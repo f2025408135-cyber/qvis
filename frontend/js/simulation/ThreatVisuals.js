@@ -132,6 +132,84 @@ export class ThreatVisualManager {
                 this.scene.add(halo);
                 objects.push({ mesh: halo, type: 'pulsing_scale' });
                 break;
+
+            case "campaign": {
+                // Animated red arcs / lightning between correlated backends.
+                // Creates multiple pulsing tube geometries radiating from the backend
+                // to simulate coordinated attack connections.
+                const triggeringThreats = (threatEvent.evidence && threatEvent.evidence.triggering_threats) || [];
+                const arcCount = Math.max(3, Math.min(triggeringThreats.length + 2, 8));
+
+                for (let i = 0; i < arcCount; i++) {
+                    // Random outward direction for each arc
+                    const theta = (i / arcCount) * Math.PI * 2 + Math.random() * 0.5;
+                    const phi = (Math.random() - 0.5) * Math.PI * 0.6;
+                    const arcLength = backend.radius * (2.5 + Math.random() * 2.0);
+
+                    const endX = backend.position.x + Math.cos(theta) * Math.cos(phi) * arcLength;
+                    const endY = backend.position.y + Math.sin(phi) * arcLength;
+                    const endZ = backend.position.z + Math.sin(theta) * Math.cos(phi) * arcLength;
+
+                    // Build a curved path (quadratic bezier for lightning arc)
+                    const midX = (backend.position.x + endX) / 2 + (Math.random() - 0.5) * arcLength * 0.5;
+                    const midY = (backend.position.y + endY) / 2 + (Math.random() - 0.5) * arcLength * 0.4;
+                    const midZ = (backend.position.z + endZ) / 2 + (Math.random() - 0.5) * arcLength * 0.5;
+
+                    const curve = new THREE.QuadraticBezierCurve3(
+                        backend.position.clone(),
+                        new THREE.Vector3(midX, midY, midZ),
+                        new THREE.Vector3(endX, endY, endZ)
+                    );
+
+                    const tubeGeo = new THREE.TubeGeometry(curve, 24, 0.4 + intensity * 0.3, 6, false);
+                    const tubeMat = new THREE.MeshBasicMaterial({
+                        color: 0xff2222,
+                        transparent: true,
+                        opacity: 0.6 * intensity,
+                        blending: THREE.AdditiveBlending
+                    });
+                    const tube = new THREE.Mesh(tubeGeo, tubeMat);
+                    this.scene.add(tube);
+
+                    // Small sphere at the arc endpoint for emphasis
+                    const tipGeo = new THREE.SphereGeometry(1.2, 8, 8);
+                    const tipMat = new THREE.MeshBasicMaterial({
+                        color: 0xff4444,
+                        transparent: true,
+                        opacity: 0.7 * intensity,
+                        blending: THREE.AdditiveBlending
+                    });
+                    const tip = new THREE.Mesh(tipGeo, tipMat);
+                    tip.position.set(endX, endY, endZ);
+                    this.scene.add(tip);
+
+                    objects.push({
+                        mesh: tube,
+                        type: 'campaign_arc',
+                        baseOpacity: 0.6 * intensity,
+                        phaseOffset: i * (Math.PI * 2 / arcCount)
+                    });
+                    objects.push({
+                        mesh: tip,
+                        type: 'campaign_tip',
+                        phaseOffset: i * (Math.PI * 2 / arcCount)
+                    });
+                }
+
+                // Inner red core pulse on the backend itself
+                const corePulseGeo = new THREE.SphereGeometry(backend.radius * 1.15, 32, 32);
+                const corePulseMat = new THREE.MeshBasicMaterial({
+                    color: 0xff1100,
+                    transparent: true,
+                    opacity: 0.15 * intensity,
+                    blending: THREE.AdditiveBlending
+                });
+                const corePulse = new THREE.Mesh(corePulseGeo, corePulseMat);
+                corePulse.position.copy(backend.position);
+                this.scene.add(corePulse);
+                objects.push({ mesh: corePulse, type: 'pulsing' });
+                break;
+            }
         }
 
         this.activeEffects.set(backend.id, { effectName, objects });
@@ -178,6 +256,17 @@ export class ThreatVisualManager {
                 else if (obj.type === 'pulsing_scale') {
                     const s = 0.95 + Math.sin(time * 3) * 0.05;
                     obj.mesh.scale.set(s, s, s);
+                }
+                else if (obj.type === 'campaign_arc') {
+                    // Red pulsing opacity — creates lightning-like flicker
+                    const pulse = Math.sin(time * 8 + (obj.phaseOffset || 0)) * 0.5 + 0.5;
+                    obj.mesh.material.opacity = obj.baseOpacity * (0.3 + pulse * 0.7);
+                }
+                else if (obj.type === 'campaign_tip') {
+                    const tipPulse = Math.sin(time * 6 + (obj.phaseOffset || 0)) * 0.5 + 0.5;
+                    const tipScale = 0.8 + tipPulse * 0.4;
+                    obj.mesh.scale.set(tipScale, tipScale, tipScale);
+                    obj.mesh.material.opacity = 0.4 + tipPulse * 0.4;
                 }
             });
         });
