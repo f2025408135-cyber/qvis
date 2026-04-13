@@ -3,39 +3,90 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QVis - Quantum Threat Topology Engine</title>
+    <title>QVis — Quantum Threat Topology Engine</title>
+    <meta name="description" content="Real-time quantum computing threat intelligence visualization engine">
     <link rel="stylesheet" href="css/main.css">
+
+    <!-- Inline critical error styles so they work even if CSS fails to load -->
+    <style>
+        .script-load-error {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #020408; z-index: 5000; display: flex; align-items: center;
+            justify-content: center; color: #ff5555; font-family: monospace;
+            text-align: center; padding: 40px;
+        }
+    </style>
 </head>
 <body>
     <canvas id="qvis-canvas"></canvas>
-    
+
     <!-- Cinematic Vignette Overlay -->
     <div id="vignette"></div>
 
+    <!-- UI Containers -->
     <div id="hud"></div>
-    <div id="threat-panel"></div>
-    <div id="legend"></div>
+    <div id="threat-panel" role="complementary" aria-label="Threat details panel"></div>
+    <div id="legend" role="complementary" aria-label="Visualization legend"></div>
     <div id="controls"></div>
-    
+
+    <!-- Multi-Stage Loading Screen -->
     <div id="loading">
         <div class="loader-ring"></div>
-        <div class="loader-text">INITIALIZING QUANTUM STATE...</div>
+        <div class="loader-text">DETECTING CAPABILITIES...</div>
+        <div class="loader-progress">
+            <div class="loader-progress-fill"></div>
+        </div>
+        <div class="loader-progress-text">0%</div>
     </div>
 
     <!-- Core Three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    
-    <!-- Post-Processing Modules -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
 
-    <!-- Tween for smooth camera movements -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+    <!-- Post-Processing Modules (optional — graceful fallback without bloom) -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js" onerror="window.__bloomUnavailable=true"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js" onerror="window.__bloomUnavailable=true"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js" onerror="window.__bloomUnavailable=true"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js" onerror="window.__bloomUnavailable=true"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js" onerror="window.__bloomUnavailable=true"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js" onerror="window.__bloomUnavailable=true"></script>
 
+    <!-- Tween for smooth camera movements (optional — fallback to instant camera) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js" onerror="window.__tweenUnavailable=true"></script>
+
+    <!-- Application Entry Point -->
     <script type="module" src="js/main.js"></script>
+
+    <!-- Fallback: Show error if scripts critically fail -->
+    <script>
+        // Timeout: if the module hasn't initialized in 15s, show error
+        window.__qvisTimeout = setTimeout(function() {
+            var loading = document.getElementById('loading');
+            if (loading && loading.style.display !== 'none') {
+                loading.innerHTML =
+                    '<div class="loader-text" style="color: #ff5555;">INITIALIZATION TIMED OUT</div>' +
+                    '<p style="color: #88aadd; font-size: 13px; margin-top: 15px;">' +
+                    'Check your network connection and try refreshing.</p>' +
+                    '<button class="action-btn" style="margin-top: 20px; width: auto; padding: 10px 30px;" ' +
+                    'onclick="location.reload()">RETRY</button>';
+            }
+        }, 15000);
+
+        // Check if THREE loaded (critical dependency)
+        window.addEventListener('load', function() {
+            if (typeof THREE === 'undefined') {
+                clearTimeout(window.__qvisTimeout);
+                document.getElementById('loading').outerHTML =
+                    '<div class="script-load-error">' +
+                    '<div style="font-size: 48px; margin-bottom: 20px;">&#x26A0;</div>' +
+                    '<h2 style="margin-bottom: 15px;">RENDERER FAILED TO LOAD</h2>' +
+                    '<p>Three.js could not be loaded from CDN. Please check your network connection.</p>' +
+                    '<p style="margin-top: 10px; font-size: 12px; color: #6688aa;">' +
+                    'If you are behind a firewall, you may need to allow CDN access.</p>' +
+                    '<button class="action-btn" style="margin-top: 20px; width: auto; padding: 10px 30px;" ' +
+                    'onclick="location.reload()">RETRY</button>' +
+                    '</div>';
+            }
+        });
+    </script>
 </body>
 </html>

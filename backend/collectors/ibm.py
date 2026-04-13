@@ -45,6 +45,14 @@ class IBMQuantumCollector(BaseCollector):
                     self.service = QiskitRuntimeService(token=self.ibm_token, channel="ibm_quantum")
                 except Exception as e:
                     logger.error("ibm_auth_error", error=str(e))
+                    if self.cached_last_snapshot:
+                        logger.warning("using_cached_snapshot_after_auth_failure")
+                        degraded = self.cached_last_snapshot.model_copy()
+                        degraded.generated_at = datetime.now(timezone.utc)
+                        if not degraded.collection_metadata:
+                            degraded.collection_metadata = {}
+                        degraded.collection_metadata["degraded"] = True
+                        return degraded
                     return self._empty_snapshot()
                 
             # Safely check if backends property/method needs to be awaited depending on Qiskit version/mock status
