@@ -7,15 +7,17 @@ class Settings(BaseSettings):
 
     demo_mode: bool = True
     update_interval_seconds: int = 30
-    ibm_quantum_token: str = ""
-    aws_access_key_id: str = ""
-    aws_secret_access_key: str = ""
+
+    # ─── Credentials (SecretStr — never logged or exposed via repr/dump) ──
+    ibm_quantum_token: SecretStr = SecretStr("")
+    aws_access_key_id: SecretStr = SecretStr("")
+    aws_secret_access_key: SecretStr = SecretStr("")
     aws_default_region: str = "us-east-1"
-    azure_quantum_subscription_id: str = ""
+    azure_quantum_subscription_id: SecretStr = SecretStr("")
 
     # Security
     auth_enabled: bool = False
-    api_key: str = ""
+    api_key: SecretStr = SecretStr("")
     rate_limit: str = "60/60"
 
     # Logging
@@ -23,11 +25,18 @@ class Settings(BaseSettings):
     log_format: str = Field(default="console", description="Log output format: 'console' or 'json'")
 
     # GitHub scanner
-    github_token: str = ""
+    github_token: SecretStr = SecretStr("")
 
     # Alerting
-    slack_webhook_url: str = ""
-    discord_webhook_url: str = ""
-    webhook_url: str = ""
+    slack_webhook_url: SecretStr = SecretStr("")
+    discord_webhook_url: SecretStr = SecretStr("")
+    webhook_url: SecretStr = SecretStr("")
+
+    def __repr__(self) -> str:
+        """Redacted repr — never exposes secret values."""
+        return "Settings(demo_mode={!r}, auth_enabled={!r}, log_level={!r})".format(
+            self.demo_mode, self.auth_enabled, self.log_level
+        )
+
 
 settings = Settings()

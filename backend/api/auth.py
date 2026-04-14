@@ -20,9 +20,10 @@ def _hash_key(key: str) -> str:
 
 def _get_hashed_key() -> Optional[str]:
     """Return the hashed configured API key, or None if not set."""
-    if not settings.api_key:
+    secret = settings.api_key.get_secret_value()
+    if not secret:
         return None
-    return _hash_key(settings.api_key)
+    return _hash_key(secret)
 
 
 async def verify_api_key(request: Request, api_key: Optional[str] = Depends(API_KEY_HEADER)):

@@ -98,20 +98,20 @@ elif settings.demo_mode:
     mock_azure = AzureQuantumCollector()     # Falls back to mock internally
     collector = AggregatorCollector([mock_ibm, mock_braket, mock_azure])
     logger.info("using_aggregated_demo_collector", platforms=["ibm", "braket", "azure"])
-elif settings.ibm_quantum_token:
+elif settings.ibm_quantum_token.get_secret_value():
     # Production: start with IBM, add Braket/Azure if credentials present
     from backend.collectors.ibm import IBMQuantumCollector
-    sub_collectors = [IBMQuantumCollector(ibm_token=settings.ibm_quantum_token)]
+    sub_collectors = [IBMQuantumCollector(ibm_token=settings.ibm_quantum_token.get_secret_value())]
 
-    if settings.aws_access_key_id:
+    if settings.aws_access_key_id.get_secret_value():
         from backend.collectors.braket import BraketCollector
         sub_collectors.append(BraketCollector(region=settings.aws_default_region))
         logger.info("braket_collector_added")
 
-    if settings.azure_quantum_subscription_id:
+    if settings.azure_quantum_subscription_id.get_secret_value():
         from backend.collectors.azure_quantum import AzureQuantumCollector
         sub_collectors.append(AzureQuantumCollector(
-            subscription_id=settings.azure_quantum_subscription_id
+            subscription_id=settings.azure_quantum_subscription_id.get_secret_value()
         ))
         logger.info("azure_collector_added")
 
@@ -123,9 +123,9 @@ elif settings.ibm_quantum_token:
         collector = sub_collectors[0]
         logger.info("using_ibm_collector", backends="live")
 
-    if settings.github_token:
+    if settings.github_token.get_secret_value():
         from backend.collectors.github_scanner import GitHubTokenScanner
-        github_scanner = GitHubTokenScanner(token=settings.github_token)
+        github_scanner = GitHubTokenScanner(token=settings.github_token.get_secret_value())
         logger.info("using_github_scanner")
 else:
     from backend.collectors.mock import MockCollector
@@ -296,11 +296,11 @@ async def health_check():
             platforms = ["ibm_quantum", "amazon_braket", "azure_quantum"]
         else:
             platforms = ["mock"]
-    elif settings.ibm_quantum_token:
+    elif settings.ibm_quantum_token.get_secret_value():
         platforms.append("ibm_quantum")
-    if settings.aws_access_key_id:
+    if settings.aws_access_key_id.get_secret_value():
         platforms.append("amazon_braket")
-    if settings.azure_quantum_subscription_id:
+    if settings.azure_quantum_subscription_id.get_secret_value():
         platforms.append("azure_quantum")
     return {
         "status": "ok",
@@ -416,7 +416,7 @@ async def websocket_endpoint(websocket: WebSocket):
     # WebSocket auth via query param: ws://host/ws/simulation?token=<key>
     if settings.auth_enabled:
         token = websocket.query_params.get("token")
-        if not token or not settings.api_key:
+        if not token or not settings.api_key.get_secret_value():
             await websocket.close(code=4001, reason="Authentication required")
             return
         import secrets as _secrets
