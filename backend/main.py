@@ -462,21 +462,41 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.close(code=4003, reason="Invalid token")
             return
 
-    await manager.connect(websocket)
+    connected = await manager.connect(websocket)
+    if not connected:
+        return
+
+    # Set a max message size on the underlying socket (Starlette/uvicorn level)
+    try:
+        # Some ASGI servers support max_size; silently continue if not
+        if hasattr(websocket, '_max_size'):
+            websocket._max_size = MAX_MESSAGE_SIZE
+    except Exception:
+        pass
+
     try:
         snapshot = await _ensure_snapshot()
         await manager.send_personal_message(snapshot.model_dump_json(), websocket)
 
         while True:
             data = await websocket.receive_text()
+
+            # Validate incoming message size and rate
+            if not manager.validate_message(data, websocket):
+                logger.warning("websocket_message_rejected", client=id(websocket))
+                continue
+
             try:
                 msg = json.loads(data)
+                # Restrict to known message types only
                 msg_type = msg.get("type")
                 if msg_type == "get_snapshot":
                     snap = await _ensure_snapshot()
                     await manager.send_personal_message(snap.model_dump_json(), websocket)
                 elif msg_type == "focus_backend":
                     backend_id = msg.get("backend_id")
+                    if not backend_id or not isinstance(backend_id, str):
+                        continue
                     logger.info("client_focus_backend", backend_id=backend_id)
                     snap = await _ensure_snapshot()
                     for b in snap.backends:
@@ -486,8 +506,11 @@ async def websocket_endpoint(websocket: WebSocket):
                                 websocket,
                             )
                             break
+                elif msg_type == "ping":
+                    # Client heartbeat — no response needed (server sends snapshots)
+                    pass
                 else:
-                    logger.warning("unknown_websocket_message", message=msg)
+                    logger.warning("unknown_websocket_message_type", msg_type=msg_type)
             except json.JSONDecodeError:
                 logger.warning("invalid_json_websocket_message", raw=data)
     except WebSocketDisconnect:
