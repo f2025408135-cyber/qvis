@@ -342,6 +342,22 @@ async def list_scenarios():
     from backend.collectors.scenario import SCENARIOS
     return {"scenarios": list(SCENARIOS.keys())}
 
+@app.post("/api/scenario/reset")
+async def reset_scenario(_auth: None = Depends(verify_api_key)):
+    """Reset to the default mock collector after a scenario playback."""
+    global collector, active_scenario
+    if active_scenario["name"] is None:
+        return {"status": "already_default", "message": "No scenario is active"}
+
+    from backend.collectors.mock import MockCollector
+    collector = MockCollector()
+    active_scenario["name"] = None
+    analyzer.reset()
+    correlator.reset()
+    baseline_manager.reset()
+    logger.info("scenario_reset_to_mock")
+    return {"status": "reset", "message": "Collector reset to mock mode"}
+
 # ─── WebSocket Endpoint (with optional auth) ──────────────────────────
 @app.websocket("/ws/simulation")
 async def websocket_endpoint(websocket: WebSocket):
