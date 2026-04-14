@@ -511,6 +511,17 @@ function initKeyboardShortcuts() {
     });
 }
 
+// ─── HTML Escaping (XSS prevention) ─────────────────────────────────────
+function _escHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 // ─── Backend Detail Overlay ─────────────────────────────────────
 
 function initBackendDetailOverlay() {
@@ -579,17 +590,17 @@ function initBackendDetailOverlay() {
         const threatCount = (threats || []).length;
         const threatList = (threats || []).slice(0, 5).map(t => {
             const sevColor = { critical: '#ff3333', high: '#ff7722', medium: '#ffbb00', low: '#33cc66', info: '#4488cc' }[t.severity] || '#888';
-            return `<div style="display:flex;gap:6px;align-items:center;"><span style="color:${sevColor};">●</span> <span style="color:#aaa;font-size:10px;">${t.technique_id}</span></div>`;
+            return `<div style="display:flex;gap:6px;align-items:center;"><span style="color:${sevColor};">●</span> <span style="color:#aaa;font-size:10px;">${_escHtml(t.technique_id)}</span></div>`;
         }).join('');
 
         content.innerHTML = `
             <div style="margin-bottom:12px;">
-                <div style="font-size:14px;font-weight:bold;color:#fff;margin-bottom:2px;">${b.name || b.id}</div>
-                <div style="font-size:10px;color:#667;letter-spacing:1px;">${b.platform || 'unknown'}${b.is_simulator ? ' (SIMULATOR)' : ''}</div>
+                <div style="font-size:14px;font-weight:bold;color:#fff;margin-bottom:2px;">${_escHtml(b.name || b.id)}</div>
+                <div style="font-size:10px;color:#667;letter-spacing:1px;">${_escHtml(b.platform || 'unknown')}${b.is_simulator ? ' (SIMULATOR)' : ''}</div>
             </div>
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
                 <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${hexColor};box-shadow:0 0 8px ${hexColor}44;"></span>
-                <span style="color:${hexColor};font-size:11px;">${b.platform === 'ibm_quantum' ? 'IBM Quantum' : b.platform === 'amazon_braket' ? 'Amazon Braket' : b.platform === 'azure_quantum' ? 'Azure Quantum' : b.platform}</span>
+                <span style="color:${hexColor};font-size:11px;">${_escHtml(b.platform === 'ibm_quantum' ? 'IBM Quantum' : b.platform === 'amazon_braket' ? 'Amazon Braket' : b.platform === 'azure_quantum' ? 'Azure Quantum' : b.platform)}</span>
             </div>
             <table style="width:100%;border-collapse:collapse;margin-bottom:12px;">
                 <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
