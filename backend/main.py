@@ -75,6 +75,7 @@ logger = structlog.get_logger()
 
 # ─── Application State ─────────────────────────────────────────────────
 latest_snapshot: Optional[SimulationSnapshot] = None
+_snapshot_lock = asyncio.Lock()
 analyzer = ThreatAnalyzer()
 correlator = ThreatCorrelator()
 baseline_manager = BaselineManager(z_threshold=2.5)
@@ -229,6 +230,11 @@ async def simulation_loop():
                 enriched_snapshot.total_threats = len(enriched_snapshot.threats)
                 logger.info("campaigns_detected", count=len(campaign_events))
 
+            # Copy-on-write: atomically swap the snapshot so API reads
+            # never see a partially-mutated object
+            async with _snapshot_lock:
+                latest_snapshot = enriched_snapshot.model_copy(deep=False)
+
             await manager.broadcast_snapshot(enriched_snapshot)
             logger.info("snapshot_broadcasted", snapshot_id=enriched_snapshot.snapshot_id)
             await asyncio.sleep(settings.update_interval_seconds)
@@ -253,11 +259,13 @@ async def lifespan(app: FastAPI):
 
     global latest_snapshot
     try:
-        latest_snapshot = analyzer.analyze(await collector.collect())
+        initial = analyzer.analyze(await collector.collect())
+        async with _snapshot_lock:
+            latest_snapshot = initial
         # Seed active_threats from the initial snapshot so /api/threats/history
         # returns data immediately (before the first simulation loop iteration)
-        if latest_snapshot and latest_snapshot.threats:
-            for threat in latest_snapshot.threats:
+        if initial and initial.threats:
+            for threat in initial.threats:
                 key = (threat.backend_id, threat.technique_id)
                 if key not in analyzer.active_threats:
                     analyzer.active_threats[key] = threat
@@ -311,10 +319,16 @@ async def health_check():
 
 # ─── Snapshot / Threat Endpoints (auth-optional) ──────────────────────
 async def _ensure_snapshot():
+    """Return the latest snapshot, initialising if necessary.
+
+    Uses _snapshot_lock so API reads never observe a partially-built
+    snapshot while the simulation loop is writing a new one.
+    """
     global latest_snapshot
-    if latest_snapshot is None:
-        latest_snapshot = analyzer.analyze(await collector.collect())
-    return latest_snapshot
+    async with _snapshot_lock:
+        if latest_snapshot is None:
+            latest_snapshot = analyzer.analyze(await collector.collect())
+        return latest_snapshot
 
 
 @app.get("/api/snapshot", response_model=SimulationSnapshot)
