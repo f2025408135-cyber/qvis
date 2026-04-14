@@ -304,11 +304,16 @@ async def get_threat_detail(threat_id: str, _auth: None = Depends(verify_api_key
 
 # ─── STIX Export Endpoint ──────────────────────────────────────────────
 @app.get("/api/threats/export/stix", tags=["threats"])
-async def export_threats_stix(_auth: None = Depends(verify_api_key)):
-    """Export all active threats as a STIX 2.1 Bundle for SIEM integration."""
+async def export_threats_stix(
+    limit: Optional[int] = None,
+    offset: int = 0,
+    _auth: None = Depends(verify_api_key),
+):
+    """Export active threats as a STIX 2.1 Bundle for SIEM integration.
+    Supports pagination via ?limit=N&offset=M query parameters."""
     snapshot = await _ensure_snapshot()
     from backend.api.export import export_stix_bundle
-    return export_stix_bundle(snapshot.threats)
+    return export_stix_bundle(snapshot.threats, limit=limit, offset=offset)
 
 # ─── Threat History Endpoint ───────────────────────────────────────────
 @app.get("/api/threats/history", tags=["threats"])
