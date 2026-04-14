@@ -288,11 +288,25 @@ app.add_middleware(SecurityHeadersMiddleware)
 @app.get("/api/health")
 async def health_check():
     """Validates the API is responsive and running."""
+    collector_name = type(collector).__name__
+    is_demo = settings.demo_mode or collector_name == "AggregatorCollector"
+    platforms = []
+    if is_demo:
+        if collector_name == "AggregatorCollector":
+            platforms = ["ibm_quantum", "amazon_braket", "azure_quantum"]
+        else:
+            platforms = ["mock"]
+    elif settings.ibm_quantum_token:
+        platforms.append("ibm_quantum")
+    if settings.aws_access_key_id:
+        platforms.append("amazon_braket")
+    if settings.azure_quantum_subscription_id:
+        platforms.append("azure_quantum")
     return {
         "status": "ok",
-        "demo_mode": settings.demo_mode,
-        "active_collector": "mock" if type(collector).__name__ == "MockCollector" else "ibm_quantum",
-        "connected_platforms": ["mock"] if settings.demo_mode else ["ibm_quantum"] if settings.ibm_quantum_token else [],
+        "demo_mode": is_demo,
+        "active_collector": collector_name,
+        "connected_platforms": platforms,
     }
 
 # ─── Snapshot / Threat Endpoints (auth-optional) ──────────────────────
