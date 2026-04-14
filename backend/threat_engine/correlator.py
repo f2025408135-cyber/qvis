@@ -43,9 +43,10 @@ CORRELATION_PATTERNS = [
 class ThreatCorrelator:
     """Detects multi-stage attacks by correlating threat events across rules."""
 
-    def __init__(self):
+    def __init__(self, history_hours: float = 2.0, max_history: int = 500):
         self.recent_threats: List[ThreatEvent] = []
-        self.max_history = 500
+        self.max_history = max_history
+        self.history_hours = history_hours
 
     def correlate(self, new_threats: List[ThreatEvent]) -> List[ThreatEvent]:
         """Check new threats against recent history for correlation patterns.
@@ -54,8 +55,8 @@ class ThreatCorrelator:
 
         now = datetime.now(timezone.utc)
 
-        # Prune old history (keep last 2 hours)
-        cutoff = now - timedelta(hours=2)
+        # Prune old history (configurable window)
+        cutoff = now - timedelta(hours=self.history_hours)
         self.recent_threats = [
             t for t in self.recent_threats if t.detected_at > cutoff
         ][-self.max_history:]

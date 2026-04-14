@@ -43,7 +43,8 @@ class BaselineManager:
         """Update baseline and return z-score if anomalous (|z| > threshold), else None."""
         key = f"{backend_id}:{metric_name}"
         z = self.baselines[key].update(value)
-        if self.baselines[key].count > 10 and abs(z) > self.z_threshold:
+        # Reduced warmup from 10 to 3 (~90s at 30s interval) to shrink detection blind spot
+        if self.baselines[key].count > 3 and abs(z) > self.z_threshold:
             return z
         return None
 

@@ -1,6 +1,7 @@
 """STIX 2.1 threat intelligence export for SIEM integration."""
 
 import uuid
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
@@ -19,17 +20,30 @@ def _severity_to_confidence(severity) -> int:
     return mapping.get(severity.value if hasattr(severity, "value") else str(severity), 50)
 
 
-# Cache mapping from threat IDs to stable STIX UUIDs (within a server lifecycle)
-_stix_id_cache: Dict[str, str] = {}
+# LRU cache mapping from threat IDs to stable STIX UUIDs (capped at 5000 entries)
+_STIX_CACHE_MAX = 5000
+_stix_id_cache: OrderedDict[str, str] = OrderedDict()
 
 
 def _get_stix_uuid(threat_id: str) -> str:
     """Return a stable UUID-based STIX ID for a given threat ID.
-    Uses a cache so the same threat always gets the same STIX ID within
-    a server lifecycle, but IDs are proper UUIDs per STIX 2.1 spec."""
-    if threat_id not in _stix_id_cache:
-        _stix_id_cache[threat_id] = str(uuid.uuid5(uuid.NAMESPACE_URL, f"qvis:threat:{threat_id}"))
-    return _stix_id_cache[threat_id]
+
+    Uses an LRU cache (capped at _STIX_CACHE_MAX) so the same threat
+    always gets the same STIX ID within a server lifecycle, while
+    preventing unbounded memory growth on long-running servers.
+    """
+    if threat_id in _stix_id_cache:
+        # Move to end (most recently used)
+        _stix_id_cache.move_to_end(threat_id)
+        return _stix_id_cache[threat_id]
+
+    # Evict oldest entries if at capacity
+    while len(_stix_id_cache) >= _STIX_CACHE_MAX:
+        _stix_id_cache.popitem(last=False)
+
+    stix_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"qvis:threat:{threat_id}"))
+    _stix_id_cache[threat_id] = stix_id
+    return stix_id
 
 
 def threat_to_stix_indicator(threat: ThreatEvent) -> Dict[str, Any]:
