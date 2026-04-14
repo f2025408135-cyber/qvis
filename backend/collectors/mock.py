@@ -182,13 +182,21 @@ class MockCollector(BaseCollector):
             # Always return a fresh clean copy of base mock data so tests pass deterministically
             data = copy.deepcopy(MOCK_DATA)
             data["snapshot_id"] = str(uuid.uuid4())
-            data["generated_at"] = datetime.now(timezone.utc).isoformat()
+            now_iso = datetime.now(timezone.utc).isoformat()
+            data["generated_at"] = now_iso
+            # Update threat timestamps to current time so correlator works
+            for threat in data.get("threats", []):
+                threat["detected_at"] = now_iso
             return SimulationSnapshot(**data)
 
         data = copy.deepcopy(self.base_data)
 
         data["snapshot_id"] = str(uuid.uuid4())
-        data["generated_at"] = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        data["generated_at"] = now_iso
+        # Update threat timestamps to current time so correlator works
+        for threat in data.get("threats", []):
+            threat["detected_at"] = now_iso
 
         for backend in data["backends"]:
             variation = random.uniform(-0.1, 0.1)
