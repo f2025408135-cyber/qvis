@@ -12,7 +12,6 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
     aws_default_region: str = "us-east-1"
     azure_quantum_subscription_id: str = ""
-    anthropic_api_key: str = ""
 
     # Security
     auth_enabled: bool = False
