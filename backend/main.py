@@ -464,11 +464,13 @@ async def serve_frontend(full_path: str):
         raise HTTPException(status_code=403, detail="Path traversal blocked")
 
     from pathlib import Path
+    import mimetypes
     frontend_dir = Path(__file__).parent.parent / "frontend"
 
     if full_path and (frontend_dir / full_path).is_file():
         from starlette.responses import FileResponse
-        return FileResponse(frontend_dir / full_path)
+        media_type = mimetypes.guess_type(full_path)[0] or "application/octet-stream"
+        return FileResponse(frontend_dir / full_path, media_type=media_type)
 
     # SPA fallback: serve index.html for any unmatched route
     index_file = frontend_dir / "index.html"
