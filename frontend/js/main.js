@@ -19,6 +19,7 @@ import { FallbackManager, FALLBACK_STATE } from './core/FallbackManager.js';
 import { toastManager } from './core/ToastManager.js';
 import { perfMonitor } from './core/PerformanceMonitor.js';
 import { Canvas2DFallback } from './renderers/Canvas2DFallback.js';
+import { AudioEngine } from './core/AudioEngine.js';
 
 let scene, camera, renderer, composer, starSystem;
 let lastTime = 0;
@@ -31,6 +32,7 @@ let stateMapper;
 let hud, threatPanel, legend, timeline;
 let canvas2d = null;
 let useWebGL = true;
+const audioEngine = new AudioEngine();
 
 // ─── Loading State Machine ───────────────────────────────────────────
 const LOADING_STAGES = {
@@ -132,6 +134,15 @@ function bootstrap() {
 
         // Setup keyboard shortcuts
         initKeyboardShortcuts();
+
+        // Initialize audio engine on first user interaction (browser autoplay policy)
+        const initAudio = () => {
+            audioEngine.init();
+            document.removeEventListener('click', initAudio);
+            document.removeEventListener('keydown', initAudio);
+        };
+        document.addEventListener('click', initAudio);
+        document.addEventListener('keydown', initAudio);
 
     } catch (e) {
         console.error('[QVis] Bootstrap failed:', e);
@@ -265,6 +276,17 @@ function initWebSocket(fallbackManager) {
         document.dispatchEvent(new CustomEvent('snapshotUpdate', {
             detail: snapshot
         }));
+
+        // Play audio cues for new threats
+        if (snapshot.threats && snapshot.threats.length > 0) {
+            const hasCritical = snapshot.threats.some(t => t.severity === 'critical');
+            const hasHigh = snapshot.threats.some(t => t.severity === 'high');
+            if (hasCritical) {
+                audioEngine.playAlert();
+            } else if (hasHigh) {
+                audioEngine.playConnect();
+            }
+        }
     });
 
     // Connection state changes
@@ -474,9 +496,16 @@ function initKeyboardShortcuts() {
                 }
                 break;
 
+            case 'm':
+            case 'M':
+                // Toggle audio
+                const audioState = audioEngine.toggle();
+                toastManager.info(audioState ? 'Audio enabled' : 'Audio muted');
+                break;
+
             case '?':
                 // Show keyboard shortcuts help
-                toastManager.info('ESC: Close panel | R: Reset | Space: Pause rotate | +/-: Zoom | Ctrl+F: FPS | H: Toggle HUD', 8000);
+                toastManager.info('ESC: Close panel | R: Reset | Space: Pause rotate | +/-: Zoom | M: Mute | Ctrl+F: FPS | H: Toggle HUD', 8000);
                 break;
         }
     });
