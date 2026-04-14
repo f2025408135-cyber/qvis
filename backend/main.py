@@ -282,13 +282,25 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="QVis API", lifespan=lifespan)
 
 # Middleware order: CORS → Rate Limit → Security Headers
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[os.getenv("CORS_ORIGINS", "http://localhost:3000")],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_cors_origins_raw = os.getenv("CORS_ORIGINS", "http://localhost:3000")
+if _cors_origins_raw.strip() == "*":
+    # Wildcard: split into list for Starlette (credentials must be False with *)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["X-API-Key", "Content-Type", "Authorization"],
+    )
+else:
+    # Specific origins: safe to enable credentials
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[o.strip() for o in _cors_origins_raw.split(",") if o.strip()],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["X-API-Key", "Content-Type", "Authorization"],
+    )
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
