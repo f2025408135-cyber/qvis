@@ -332,21 +332,29 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 # ─── Frontend Static File Serving ─────────────────────────────────────
+# Paths reserved by FastAPI/Starlette — never intercept these
+_RESERVED_PATHS = {"docs", "redoc", "openapi.json"}
+
 @app.get("/{full_path:path}")
 async def serve_frontend(full_path: str):
-    """Serves the SPA frontend files. Rejects null bytes."""
+    """Serves the SPA frontend files. Rejects null bytes and reserved paths."""
+    # Let FastAPI handle its own built-in routes
+    if full_path in _RESERVED_PATHS:
+        raise HTTPException(status_code=404, detail="Not a frontend route")
+
     if "\x00" in full_path:
         raise HTTPException(status_code=400, detail="Invalid path")
+
+    # Block path traversal attempts
+    if ".." in full_path:
+        raise HTTPException(status_code=403, detail="Path traversal blocked")
 
     from pathlib import Path
     frontend_dir = Path(__file__).parent.parent / "frontend"
 
     if full_path and (frontend_dir / full_path).is_file():
-        return JSONResponse(
-            status_code=200,
-            content={},
-            headers={"X-Accel-Redirect": f"/frontend/{full_path}"},
-        ) if False else (frontend_dir / full_path).read_text()
+        from starlette.responses import FileResponse
+        return FileResponse(frontend_dir / full_path)
 
     # SPA fallback: serve index.html for any unmatched route
     index_file = frontend_dir / "index.html"
