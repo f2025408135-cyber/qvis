@@ -1,14 +1,44 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
-.env
-.venv/
-venv/
+*.py[cod]
+*$py.class
+*.egg-info/
 dist/
 build/
-*.egg-info/
-node_modules/
+*.egg
+
+# Environment
+.env
+.env.local
+.venv/
+venv/
+env/
+
+# Data
+.qvis-data/
+*.db
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
 *.log
+
+# Misc
+node_modules/
 demo/
 verification/
