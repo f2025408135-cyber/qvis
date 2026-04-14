@@ -9,7 +9,7 @@ import structlog
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import List, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -356,6 +356,12 @@ async def get_threats(severity: Optional[Severity] = None, _auth: None = Depends
 @app.get("/api/threat/{threat_id}", response_model=ThreatEvent)
 async def get_threat_detail(threat_id: str, _auth: None = Depends(verify_api_key)):
     """Retrieves deeply detailed evidence and remediation for a specific threat."""
+    # Validate threat_id format: alphanumeric, hyphens, underscores, colons only
+    import re
+    if not re.match(r'^[a-zA-Z0-9_\-:]+$', threat_id):
+        raise HTTPException(status_code=400, detail="Invalid threat ID format")
+    if len(threat_id) > 200:
+        raise HTTPException(status_code=400, detail="Threat ID too long")
     snapshot = await _ensure_snapshot()
     for threat in snapshot.threats:
         if threat.id == threat_id:
@@ -365,8 +371,8 @@ async def get_threat_detail(threat_id: str, _auth: None = Depends(verify_api_key
 # ─── STIX Export Endpoint ──────────────────────────────────────────────
 @app.get("/api/threats/export/stix", tags=["threats"])
 async def export_threats_stix(
-    limit: Optional[int] = None,
-    offset: int = 0,
+    limit: Optional[int] = Query(default=None, ge=1, le=1000, description="Max threats to return (1-1000)"),
+    offset: int = Query(default=0, ge=0, le=100000, description="Number of threats to skip"),
     _auth: None = Depends(verify_api_key),
 ):
     """Export active threats as a STIX 2.1 Bundle for SIEM integration.
@@ -389,6 +395,11 @@ active_scenario = {"name": None}
 @app.post("/api/scenario/load")
 async def load_scenario(name: str, _auth: None = Depends(verify_api_key)):
     """Load a pre-recorded attack scenario for playback."""
+    import re
+    if not re.match(r'^[a-zA-Z0-9_\-]+$', name):
+        raise HTTPException(status_code=400, detail="Invalid scenario name")
+    if len(name) > 100:
+        raise HTTPException(status_code=400, detail="Scenario name too long")
     global collector, active_scenario
     from backend.collectors.scenario import ScenarioCollector
     scenario = ScenarioCollector()
