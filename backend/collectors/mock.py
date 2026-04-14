@@ -117,7 +117,7 @@ MOCK_DATA = {
       "technique_name": "Calibration Harvesting",
       "severity": "medium",
       "platform": "ibm_quantum",
-      "backend_id": "ibm_kyoto",
+      "backend_id": "ibm_sherbrooke",
       "title": "Systematic calibration data harvesting",
       "description": "High frequency of backend properties requests without corresponding job submissions.",
       "evidence": {
