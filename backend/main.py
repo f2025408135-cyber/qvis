@@ -6,6 +6,7 @@ import time
 import json
 import logging
 import structlog
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import List, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
@@ -19,6 +20,7 @@ from backend.api.security_headers import SecurityHeadersMiddleware
 from backend.api.ratelimit import RateLimitMiddleware
 from backend.threat_engine.analyzer import ThreatAnalyzer
 from backend.threat_engine.correlator import ThreatCorrelator
+from backend.threat_engine.baseline import BaselineManager
 from backend.threat_engine.models import SimulationSnapshot, BackendNode, ThreatEvent, Severity
 
 # ─── Logging Configuration ─────────────────────────────────────────────
@@ -75,6 +77,7 @@ logger = structlog.get_logger()
 latest_snapshot: Optional[SimulationSnapshot] = None
 analyzer = ThreatAnalyzer()
 correlator = ThreatCorrelator()
+baseline_manager = BaselineManager(z_threshold=2.5)
 github_scanner = None
 
 # ─── Collector Strategy ────────────────────────────────────────────────
@@ -129,6 +132,56 @@ async def simulation_loop():
                 enriched_snapshot = analyzer.analyze(snapshot)
 
             latest_snapshot = enriched_snapshot
+
+            # Run adaptive baseline checks on each backend's calibration metrics
+            baseline_threats = []
+            for backend in enriched_snapshot.backends:
+                if not backend.calibration:
+                    continue
+                for cal in backend.calibration:
+                    # Check T1 coherence time
+                    z_t1 = baseline_manager.check(backend.id, f"q{cal.qubit_id}_t1", cal.t1_us)
+                    if z_t1 is not None:
+                        baseline_threats.append(ThreatEvent(
+                            id=f"baseline-{backend.id}-q{cal.qubit_id}-t1",
+                            technique_id="QTT014",
+                            technique_name="Adaptive Baseline Anomaly",
+                            severity=Severity.high if abs(z_t1) > 4.0 else Severity.medium,
+                            platform=backend.platform,
+                            backend_id=backend.id,
+                            title=f"T1 anomaly on {backend.id} qubit {cal.qubit_id}",
+                            description=f"T1 coherence time deviated {abs(z_t1):.1f} sigma from adaptive baseline.",
+                            evidence={"qubit_id": cal.qubit_id, "z_score": round(z_t1, 2), "t1_us": cal.t1_us},
+                            detected_at=datetime.now(timezone.utc),
+                            visual_effect="calibration_drain",
+                            visual_intensity=min(abs(z_t1) / 5.0, 1.0),
+                            remediation=["Investigate qubit calibration drift.", "Check for external interference."]
+                        ))
+                    # Check T2 coherence time
+                    z_t2 = baseline_manager.check(backend.id, f"q{cal.qubit_id}_t2", cal.t2_us)
+                    if z_t2 is not None:
+                        baseline_threats.append(ThreatEvent(
+                            id=f"baseline-{backend.id}-q{cal.qubit_id}-t2",
+                            technique_id="QTT014",
+                            technique_name="Adaptive Baseline Anomaly",
+                            severity=Severity.high if abs(z_t2) > 4.0 else Severity.medium,
+                            platform=backend.platform,
+                            backend_id=backend.id,
+                            title=f"T2 anomaly on {backend.id} qubit {cal.qubit_id}",
+                            description=f"T2 coherence time deviated {abs(z_t2):.1f} sigma from adaptive baseline.",
+                            evidence={"qubit_id": cal.qubit_id, "z_score": round(z_t2, 2), "t2_us": cal.t2_us},
+                            detected_at=datetime.now(timezone.utc),
+                            visual_effect="calibration_drain",
+                            visual_intensity=min(abs(z_t2) / 5.0, 1.0),
+                            remediation=["Investigate qubit calibration drift.", "Check for external interference."]
+                        ))
+
+            if baseline_threats:
+                for bt in baseline_threats:
+                    analyzer.active_threats[(bt.backend_id, bt.technique_id + bt.id)] = bt
+                enriched_snapshot.threats.extend(baseline_threats)
+                enriched_snapshot.total_threats = len(enriched_snapshot.threats)
+                logger.info("baseline_anomalies_detected", count=len(baseline_threats))
 
             # Run cross-rule correlation on new threats
             campaign_events = correlator.correlate(enriched_snapshot.threats)
