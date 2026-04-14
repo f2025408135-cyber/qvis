@@ -182,9 +182,8 @@ export class Timeline {
 
     async fetchHistory() {
         try {
-            const backendHost = location.port === '3000'
-                ? '127.0.0.1:8000'
-                : (location.host || '127.0.0.1:8000');
+            const backendHost = (window.__QVIS_BACKEND_HOST)
+                || (location.port === '3000' ? '127.0.0.1:8000' : location.host);
             const token = window.__QVIS_WS_TOKEN || '';
             const url = `${location.protocol}//${backendHost}/api/threats/history${token ? '?token=' + token : ''}`;
 

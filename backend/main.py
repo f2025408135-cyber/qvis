@@ -5,6 +5,7 @@ import os
 import time
 import json
 import logging
+import uuid
 import structlog
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
@@ -12,6 +13,8 @@ from typing import List, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
 
 from backend.config import settings
 from backend.api.websocket import manager
@@ -281,7 +284,24 @@ async def lifespan(app: FastAPI):
 # ─── FastAPI App ───────────────────────────────────────────────────────
 app = FastAPI(title="QVis API", lifespan=lifespan)
 
-# Middleware order: CORS → Rate Limit → Security Headers
+
+# ─── Request ID Middleware ─────────────────────────────────────────
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """Adds a unique X-Request-ID header to every response and binds it
+    to structlog context for correlated log tracing."""
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:8]
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(request_id=request_id)
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
+# ─── CORS Middleware ───────────────────────────────────────────────
+# Middleware order: RequestID → CORS → Rate Limit → Security Headers
+app.add_middleware(RequestIDMiddleware)
 _cors_origins_raw = os.getenv("CORS_ORIGINS", "http://localhost:3000")
 if _cors_origins_raw.strip() == "*":
     # Wildcard: split into list for Starlette (credentials must be False with *)
@@ -522,6 +542,8 @@ async def websocket_endpoint(websocket: WebSocket):
 # ─── Frontend Static File Serving ─────────────────────────────────────
 # Paths reserved by FastAPI/Starlette — never intercept these
 _RESERVED_PATHS = {"docs", "redoc", "openapi.json"}
+# Import urllib for URL-encoded path traversal detection
+from urllib.parse import unquote
 
 @app.get("/{full_path:path}")
 async def serve_frontend(full_path: str):
@@ -530,11 +552,13 @@ async def serve_frontend(full_path: str):
     if full_path in _RESERVED_PATHS:
         raise HTTPException(status_code=404, detail="Not a frontend route")
 
-    if "\x00" in full_path:
+    # Block null bytes (all variants)
+    if "\x00" in full_path or "%00" in full_path.lower():
         raise HTTPException(status_code=400, detail="Invalid path")
 
-    # Block path traversal attempts
-    if ".." in full_path:
+    # Block path traversal — check both raw and URL-decoded forms
+    decoded = unquote(full_path)
+    if ".." in full_path or ".." in decoded:
         raise HTTPException(status_code=403, detail="Path traversal blocked")
 
     from pathlib import Path

@@ -242,7 +242,11 @@ function initCanvas2D(fallbackManager) {
 }
 
 function initWebSocket(fallbackManager) {
-    const backendHost = location.port === '3000' ? '127.0.0.1:8000' : (location.host || '127.0.0.1:8000');
+    // Determine backend host from environment or default
+    // In production behind a reverse proxy, same-origin is the correct default.
+    // In development, the frontend dev server (port 3000) proxies to backend (port 8000).
+    const backendHost = (window.__QVIS_BACKEND_HOST)
+        || (location.port === '3000' ? '127.0.0.1:8000' : location.host);
     const wsToken = window.__QVIS_WS_TOKEN || '';
     const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${backendHost}/ws/simulation${wsToken ? '?token=' + wsToken : ''}`;
     let firstSnapshotReceived = false;
