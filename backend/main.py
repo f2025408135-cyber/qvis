@@ -81,16 +81,48 @@ baseline_manager = BaselineManager(z_threshold=2.5)
 github_scanner = None
 
 # ─── Collector Strategy ────────────────────────────────────────────────
-if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("USE_MOCK") == "true" or settings.demo_mode:
+if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("USE_MOCK") == "true":
     from backend.collectors.mock import MockCollector
     collector = MockCollector()
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        collector.is_test = True
-    logger.info("using_mock_collector", mode="demo_or_test")
+    collector.is_test = True
+    logger.info("using_mock_collector", mode="test")
+elif settings.demo_mode:
+    # Demo mode: use mock IBM + mock Braket + mock Azure for multi-platform showcase
+    from backend.collectors.mock import MockCollector
+    from backend.collectors.braket import BraketCollector
+    from backend.collectors.azure_quantum import AzureQuantumCollector
+    from backend.collectors.aggregator import AggregatorCollector
+
+    mock_ibm = MockCollector()
+    mock_braket = BraketCollector()          # Falls back to mock internally
+    mock_azure = AzureQuantumCollector()     # Falls back to mock internally
+    collector = AggregatorCollector([mock_ibm, mock_braket, mock_azure])
+    logger.info("using_aggregated_demo_collector", platforms=["ibm", "braket", "azure"])
 elif settings.ibm_quantum_token:
+    # Production: start with IBM, add Braket/Azure if credentials present
     from backend.collectors.ibm import IBMQuantumCollector
-    collector = IBMQuantumCollector(ibm_token=settings.ibm_quantum_token)
-    logger.info("using_ibm_collector", backends="live")
+    sub_collectors = [IBMQuantumCollector(ibm_token=settings.ibm_quantum_token)]
+
+    if settings.aws_access_key_id:
+        from backend.collectors.braket import BraketCollector
+        sub_collectors.append(BraketCollector(region=settings.aws_default_region))
+        logger.info("braket_collector_added")
+
+    if settings.azure_quantum_subscription_id:
+        from backend.collectors.azure_quantum import AzureQuantumCollector
+        sub_collectors.append(AzureQuantumCollector(
+            subscription_id=settings.azure_quantum_subscription_id
+        ))
+        logger.info("azure_collector_added")
+
+    if len(sub_collectors) > 1:
+        from backend.collectors.aggregator import AggregatorCollector
+        collector = AggregatorCollector(sub_collectors)
+        logger.info("using_aggregated_collector", platforms=len(sub_collectors))
+    else:
+        collector = sub_collectors[0]
+        logger.info("using_ibm_collector", backends="live")
+
     if settings.github_token:
         from backend.collectors.github_scanner import GitHubTokenScanner
         github_scanner = GitHubTokenScanner(token=settings.github_token)
