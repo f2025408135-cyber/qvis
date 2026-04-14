@@ -169,6 +169,14 @@ async def lifespan(app: FastAPI):
     global latest_snapshot
     try:
         latest_snapshot = analyzer.analyze(await collector.collect())
+        # Seed active_threats from the initial snapshot so /api/threats/history
+        # returns data immediately (before the first simulation loop iteration)
+        if latest_snapshot and latest_snapshot.threats:
+            for threat in latest_snapshot.threats:
+                key = (threat.backend_id, threat.technique_id)
+                if key not in analyzer.active_threats:
+                    analyzer.active_threats[key] = threat
+            logger.info("seeded_active_threats", count=len(analyzer.active_threats))
     except Exception as e:
         logger.error("initial_snapshot_error", error=str(e))
 

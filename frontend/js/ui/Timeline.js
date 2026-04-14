@@ -16,8 +16,25 @@ export class Timeline {
         this.container = container;
         this.threats = [];
         this.tooltipEl = null;
+        this._knownIds = new Set();
         this.initDOM();
         this.fetchHistory();
+
+        // Subscribe to live WebSocket snapshot updates
+        document.addEventListener('snapshotUpdate', (e) => {
+            const snapshot = e.detail;
+            if (snapshot && snapshot.threats) {
+                let added = false;
+                for (const threat of snapshot.threats) {
+                    if (!this._knownIds.has(threat.id)) {
+                        this._knownIds.add(threat.id);
+                        this.threats.push(threat);
+                        added = true;
+                    }
+                }
+                if (added) this.render();
+            }
+        });
     }
 
     initDOM() {
@@ -174,6 +191,8 @@ export class Timeline {
             const resp = await fetch(url);
             if (!resp.ok) return;
             this.threats = await resp.json();
+            // Track known IDs to deduplicate against live updates
+            this.threats.forEach(t => this._knownIds.add(t.id));
             this.render();
         } catch (e) {
             console.warn('[Timeline] Failed to fetch threat history:', e);
