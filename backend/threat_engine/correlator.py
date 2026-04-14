@@ -52,19 +52,21 @@ class ThreatCorrelator:
         Returns list of new correlated campaign events."""
         self.recent_threats.extend(new_threats)
 
+        now = datetime.now(timezone.utc)
+
         # Prune old history (keep last 2 hours)
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+        cutoff = now - timedelta(hours=2)
         self.recent_threats = [
             t for t in self.recent_threats if t.detected_at > cutoff
         ][-self.max_history:]
 
         campaigns = []
         for pattern in CORRELATION_PATTERNS:
-            campaigns.extend(self._check_pattern(pattern, new_threats))
+            campaigns.extend(self._check_pattern(pattern, new_threats, now))
 
         return campaigns
 
-    def _check_pattern(self, pattern: dict, new_threats: List[ThreatEvent]) -> List[ThreatEvent]:
+    def _check_pattern(self, pattern: dict, new_threats: List[ThreatEvent], now: datetime) -> List[ThreatEvent]:
         """Check if new threats complete a correlation pattern."""
         required_techniques = set(pattern["techniques"])
         window = timedelta(minutes=pattern["window_minutes"])
@@ -85,7 +87,7 @@ class ThreatCorrelator:
                 t for t in self.recent_threats
                 if t.backend_id == backend_id
                 and t.technique_id in required_techniques
-                and t.detected_at > datetime.now(timezone.utc) - window
+                and t.detected_at > now - window
             ]
 
             # Check if all required techniques are present
