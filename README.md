@@ -304,8 +304,33 @@ The detection engine uses techniques mapped directly to the [Q-ATT&CK](docs/quan
 
 Please note the current state of the application:
 - **IBM Quantum collector** dynamically tracks metrics, however, specific endpoints mimicking internal access rules are stubbed since they aren't publicly fetchable.
-- **AWS Braket support** is planned but not currently implemented.
 - **No authentication** is present by default. This is designed strictly as a local demonstration tool (enable with `AUTH_ENABLED=true`).
+
+## Multi-Platform Support
+
+QVis supports three quantum computing platforms:
+
+| Platform | Status | Configuration |
+|----------|--------|---------------|
+| IBM Quantum | Full support | Set `IBM_QUANTUM_TOKEN` in `.env` |
+| Amazon Braket | Read-only device metadata | Set `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
+| Azure Quantum | Read-only target metadata | Set `AZURE_QUANTUM_SUBSCRIPTION_ID` |
+
+### Demo Mode (default)
+In demo mode (`DEMO_MODE=true`), QVis automatically generates realistic mock data for all three platforms — no credentials needed. The visualization shows 8 backends across IBM, Braket, and Azure.
+
+### Production Mode
+Set `DEMO_MODE=false` and provide platform credentials in `.env`. QVis will:
+1. Connect to IBM Quantum via Qiskit Runtime
+2. Optionally connect to AWS Braket if AWS credentials are present
+3. Optionally connect to Azure Quantum if subscription ID is present
+4. Aggregate all platforms into a single unified topology view
+
+Install optional dependencies for multi-platform:
+```bash
+pip install boto3 amazon-braket-sdk   # AWS Braket
+pip install azure-quantum             # Azure Quantum
+```
 
 ## Contributing
 
