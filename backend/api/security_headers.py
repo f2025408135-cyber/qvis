@@ -16,14 +16,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Permissions-Policy"] = (
             "camera=(), microphone=(), geolocation=()"
         )
-        # CSP: allow Three.js from CDN + inline scripts for Three.js shaders
+        # CSP: allow Three.js from CDN, Swagger UI (blob: for web workers),
+        # and inline scripts/styles needed by Three.js shaders and Swagger
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             "script-src 'self' https://unpkg.com https://cdnjs.cloudflare.com "
-            "https://cdn.jsdelivr.net 'unsafe-eval'; "
+            "https://cdn.jsdelivr.net 'unsafe-eval' 'unsafe-inline' blob:; "
             "style-src 'self' 'unsafe-inline'; "
             "connect-src 'self' ws: wss:; "
-            "img-src 'self' data:; "
-            "font-src 'self'"
+            "img-src 'self' data: blob:; "
+            "worker-src 'self' blob:; "
+            "font-src 'self' data:"
         )
         return response
