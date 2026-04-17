@@ -1,25 +1,34 @@
-"""
-Structured logging configuration for QVis.
+"""Structured logging configuration for QVis.
 
 Import and call configure_logging() once at application startup
 before any other imports that use logging.
 """
 import logging
 import sys
+
 import structlog
-from backend.config import Settings
 
 
-def configure_logging(settings: Settings) -> None:
-    """
-    Configure structlog for the entire application.
+def configure_logging(log_level: str = "INFO", log_format: str = "console") -> None:
+    """Configure structlog for the entire application.
 
-    In development (LOG_FORMAT=console): human-readable colored output.
-    In production (LOG_FORMAT=json): JSON lines for log aggregation.
+    In development (log_format='console'): human-readable colored output.
+    In production (log_format='json'): JSON lines for log aggregation.
 
     Args:
-        settings: Application settings containing LOG_LEVEL and LOG_FORMAT.
+        log_level: Logging level string (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+        log_format: Output format — 'console' or 'json'.
     """
+    # Map string level to Python logging constant
+    level_map = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
+    }
+    level = level_map.get(log_level.upper(), logging.INFO)
+
     # Shared processors for both renderers
     shared_processors = [
         structlog.contextvars.merge_contextvars,
@@ -30,7 +39,7 @@ def configure_logging(settings: Settings) -> None:
         structlog.processors.StackInfoRenderer(),
     ]
 
-    if settings.log_format == "json":
+    if log_format == "json":
         renderer = structlog.processors.JSONRenderer()
     else:
         renderer = structlog.dev.ConsoleRenderer(colors=True)
@@ -54,7 +63,7 @@ def configure_logging(settings: Settings) -> None:
 
     root_logger = logging.getLogger()
     root_logger.handlers = [handler]
-    root_logger.setLevel(getattr(logging, settings.log_level.upper()))
+    root_logger.setLevel(level)
 
     # Silence noisy third-party loggers
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
