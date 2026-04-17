@@ -1,8 +1,10 @@
 from typing import List, Dict, Any, Union, Optional, Set
 from datetime import datetime, timezone, timedelta
+import time
+import structlog
+
 from backend.threat_engine.models import ThreatEvent, Severity, SimulationSnapshot
 from backend.threat_engine.rules import ALL_RULES, get_active_rules
-import structlog
 
 logger = structlog.get_logger(__name__)
 
@@ -34,9 +36,17 @@ class ThreatAnalyzer:
         
         new_events = []
         for rule in get_active_rules():
+            rule_start = time.monotonic()
             events = rule(raw_data)
-            new_events.extend(events)
+            elapsed_ms = round((time.monotonic() - rule_start) * 1000)
             
+            logger.info("rule_executed",
+                rule_name=rule.__name__,
+                threats_found=len(events),
+                duration_ms=elapsed_ms)
+            
+            new_events.extend(events)
+        
         current_time = datetime.now(timezone.utc)
         
         for event in new_events:
@@ -55,6 +65,12 @@ class ThreatAnalyzer:
                     self.active_threats[key] = event
             else:
                 self.active_threats[key] = event
+            
+            # Log each detected threat
+            logger.info("threat_detected",
+                technique_id=event.technique_id,
+                severity=event.severity.value if hasattr(event.severity, "value") else str(event.severity),
+                backend_id=event.backend_id)
                 
         sorted_events = sorted(self.active_threats.values(), key=lambda x: self._severity_rank(x.severity))
         

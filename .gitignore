@@ -1,44 +1,32 @@
-# Python
+```gitignore
+# Python compiled files
 __pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
-dist/
-build/
-*.egg
+*.pyc
+*.pyo
+*.pyd
 
-# Environment
+# Database files
+*.db-shm
+*.db-wal
+
+# Dependencies
+venv/
+.venv/
 .env
 .env.local
-.venv/
-venv/
-env/
-
-# Data
-.qvis-data/
-*.db
-*.sqlite3
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
 
 # Logs
 *.log
 
-# Misc
-node_modules/
-demo/
-verification/
+# Editors
+.vscode/
+.idea/
+
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+
+# Pytest cache
+.pytest_cache/
+```
