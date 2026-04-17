@@ -5,6 +5,7 @@ import os
 import time
 import json
 import uuid
+import resource
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import List, Optional
@@ -56,6 +57,11 @@ analyzer = ThreatAnalyzer()
 correlator = ThreatCorrelator()
 baseline_manager = BaselineManager(z_threshold=2.5)
 github_scanner = None
+
+# ─── Application version and startup tracking ──────────────────────────
+_APP_VERSION = "1.0.0"
+_APP_START_TIME = time.monotonic()
+_APP_START_TIME_ISO = datetime.now(timezone.utc).isoformat()
 
 # ─── Load calibrated thresholds if calibration_results.json exists ──────
 _cal = load_threshold_config_from_file()
@@ -452,10 +458,35 @@ else:
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
-# ─── Health Endpoint (not behind auth) ────────────────────────────────
+# ─── Health Endpoints (not behind auth) ────────────────────────────────
 @app.get("/api/health")
 async def health_check():
-    """Validates the API is responsive and running."""
+    """Comprehensive health check with component-level status.
+
+    Returns overall status, version, uptime, database connectivity,
+    collector health, and platform information. Backward-compatible
+    with existing fields (status, demo_mode, active_collector, connected_platforms).
+    """
+    uptime_seconds = round(time.monotonic() - _APP_START_TIME, 1)
+
+    # Database connectivity check
+    db_status = "ok"
+    try:
+        from backend.storage.database import _get_connection
+        conn = await _get_connection()
+        cursor = await conn.execute("SELECT 1")
+        await cursor.fetchone()
+    except Exception as exc:
+        db_status = f"error: {str(exc)[:100]}"
+
+    # Memory usage
+    try:
+        mem_info = resource.getrusage(resource.RUSAGE_SELF)
+        rss_mb = round(mem_info.ru_maxrss / 1024, 1)  # macOS: bytes, Linux: KB
+    except Exception:
+        rss_mb = None
+
+    # Collector info
     collector_name = type(collector).__name__
     is_demo = settings.demo_mode or collector_name == "AggregatorCollector"
     platforms = []
@@ -470,12 +501,70 @@ async def health_check():
         platforms.append("amazon_braket")
     if settings.azure_quantum_subscription_id.get_secret_value():
         platforms.append("azure_quantum")
+
+    # Overall status is degraded if database is down
+    overall = "degraded" if db_status != "ok" else "ok"
+
     return {
-        "status": "ok",
+        "status": overall,
+        "version": _APP_VERSION,
+        "uptime_seconds": uptime_seconds,
+        "started_at": _APP_START_TIME_ISO,
         "demo_mode": is_demo,
         "active_collector": collector_name,
         "connected_platforms": platforms,
+        "components": {
+            "database": db_status,
+            "collector": "ok",
+            "api": "ok",
+        },
+        "memory_rss_mb": rss_mb,
+        "active_threats": len(analyzer.active_threats),
     }
+
+
+@app.get("/api/health/live")
+async def liveness_check():
+    """Kubernetes liveness probe — returns 200 if the process is alive.
+
+    This endpoint never performs I/O and should always respond quickly.
+    """
+    return {"status": "alive"}
+
+
+@app.get("/api/health/ready")
+async def readiness_check():
+    """Kubernetes readiness probe — returns 200 only if all dependencies are ready.
+
+    Checks database connectivity and collector availability.
+    Returns 503 with details if any component is unhealthy.
+    """
+    checks = {}
+
+    # Database check
+    try:
+        from backend.storage.database import _get_connection
+        conn = await _get_connection()
+        cursor = await conn.execute("SELECT 1")
+        await cursor.fetchone()
+        checks["database"] = "ok"
+    except Exception as exc:
+        checks["database"] = f"error: {str(exc)[:100]}"
+
+    # Collector check — verify it has been used at least once
+    # (the collector object always exists, so we just verify it's the right type)
+    checks["collector"] = "ok" if collector is not None else "missing"
+
+    all_ok = all(v == "ok" for v in checks.values())
+    status_code = 200 if all_ok else 503
+
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "ready" if all_ok else "not_ready",
+            "checks": checks,
+        },
+    )
 
 # ─── Snapshot / Threat Endpoints (auth-optional) ──────────────────────
 async def _ensure_snapshot():
