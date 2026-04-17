@@ -40,7 +40,7 @@ from backend.config import settings
 from backend.logging_config import configure_logging
 
 # Configure logging immediately after settings are loaded
-configure_logging(settings)
+configure_logging(settings.log_level, settings.log_format)
 
 import structlog
 logger = structlog.get_logger(__name__)
@@ -759,15 +759,13 @@ def _cli_calibrate_mode() -> bool:
 
     token = os.getenv("IBM_QUANTUM_TOKEN", "")
     if not token:
-        print("ERROR: --calibrate requires IBM_QUANTUM_TOKEN to be set.", file=sys.stderr)
+        logger.error("calibrate_requires_token")
         sys.exit(1)
 
-    print(f"QVis Threshold Calibration Mode")
-    print(f"===================================")
-    print(f"Duration : {duration} minutes")
-    print(f"Collector: IBMQuantumCollector (live)")
-    print(f"Output   : calibration_results.json")
-    print()
+    logger.info("calibration_mode_starting",
+        duration_minutes=duration,
+        collector="IBMQuantumCollector",
+        output="calibration_results.json")
 
     collector = IBMQuantumCollector(ibm_token=token)
     cal = ThresholdCalibrator(collector)
@@ -775,10 +773,9 @@ def _cli_calibrate_mode() -> bool:
     result = _aio.run(cal.calibrate(duration_minutes=duration))
     path = result.save()
 
-    print()
-    print(f"Calibration complete. Results saved to: {path}")
-    print()
-    print("Recommended thresholds:")
+    logger.info("calibration_complete", path=path)
+
+    thresholds = {}
     for field in [
         "rule_002_calibration_harvest_ratio",
         "rule_003_identity_gate_ratio",
@@ -791,10 +788,9 @@ def _cli_calibrate_mode() -> bool:
     ]:
         val = getattr(result, field, None)
         label = field.replace("rule_", "RULE_").replace("_", " ").title()
-        if val is not None:
-            print(f"  {label:45s} = {val}")
-        else:
-            print(f"  {label:45s} = (insufficient data, using default)")
+        thresholds[label] = val if val is not None else "insufficient_data"
+
+    logger.info("recommended_thresholds", **thresholds)
     sys.exit(0)
 
 

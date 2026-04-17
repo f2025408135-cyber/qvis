@@ -9,6 +9,22 @@ import sys
 import structlog
 
 
+def _chain_processors(*processors):
+    """Chain multiple structlog processors into a single callable.
+
+    ProcessorFormatter.processor is called as processor(logger, method_name, event_dict).
+    This helper applies each processor in order, passing the result through.
+    """
+    def chained(logger, method_name, event_dict):
+        for proc in processors:
+            result = proc(logger, method_name, event_dict)
+            if isinstance(result, str):
+                return result
+            event_dict = result
+        return event_dict
+    return chained
+
+
 def configure_logging(log_level: str = "INFO", log_format: str = "console") -> None:
     """Configure structlog for the entire application.
 
@@ -37,7 +53,11 @@ def configure_logging(log_level: str = "INFO", log_format: str = "console") -> N
         structlog.stdlib.PositionalArgumentsFormatter(),
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
+        structlog.processors.UnicodeDecoder(),
     ]
+
+    # Exception renderer converts exc_info=True into a formatted 'exception' string
+    exception_renderer = structlog.processors.ExceptionRenderer()
 
     if log_format == "json":
         renderer = structlog.processors.JSONRenderer()
@@ -46,6 +66,7 @@ def configure_logging(log_level: str = "INFO", log_format: str = "console") -> N
 
     structlog.configure(
         processors=shared_processors + [
+            exception_renderer,
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),
@@ -53,8 +74,10 @@ def configure_logging(log_level: str = "INFO", log_format: str = "console") -> N
         cache_logger_on_first_use=True,
     )
 
+    # Chain exception renderer before the final renderer so that
+    # exc_info=True produces a formatted 'exception' field in the output.
     formatter = structlog.stdlib.ProcessorFormatter(
-        processor=renderer,
+        processor=_chain_processors(exception_renderer, renderer),
         foreign_pre_chain=shared_processors,
     )
 
