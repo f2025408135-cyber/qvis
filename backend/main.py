@@ -23,17 +23,10 @@ from backend.metrics import (
     simulation_loop_duration_seconds,
     simulation_loop_cycles_total,
     simulation_loop_errors_total,
-    collector_poll_duration_seconds,
     collector_backends_discovered,
     collector_errors_total,
-    websocket_connections_active,
-    websocket_messages_sent_total,
-    websocket_errors_total,
     baseline_anomalies_total,
-    api_auth_failures_total,
-    rate_limit_exceeded_total,
     campaign_correlations_total,
-    rule_execution_duration_seconds,
 )
 
 from backend.config import settings
@@ -352,6 +345,14 @@ async def simulation_loop():
                 cycle=cycle_count,
                 threats_active=len(analyzer.active_threats),
                 duration_ms=elapsed_ms)
+
+            # Update Prometheus gauges for active threats by severity
+            severity_counts = {}
+            for threat in analyzer.active_threats.values():
+                sev = threat.severity.value if hasattr(threat.severity, "value") else str(threat.severity)
+                severity_counts[sev] = severity_counts.get(sev, 0) + 1
+            for sev in ("critical", "high", "medium", "low", "info"):
+                threats_active.labels(severity=sev).set(severity_counts.get(sev, 0))
             
             await asyncio.sleep(settings.update_interval_seconds)
         except asyncio.CancelledError:
@@ -361,6 +362,7 @@ async def simulation_loop():
                 cycle=cycle_count,
                 error=str(e),
                 exc_info=True)
+            simulation_loop_errors_total.inc()
             await asyncio.sleep(5)
 
 # ─── Lifespan ──────────────────────────────────────────────────────────

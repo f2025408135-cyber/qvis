@@ -5,6 +5,7 @@ import structlog
 
 from backend.threat_engine.models import ThreatEvent, Severity, SimulationSnapshot
 from backend.threat_engine.rules import ALL_RULES, get_active_rules
+from backend.metrics import rule_execution_duration_seconds
 
 logger = structlog.get_logger(__name__)
 
@@ -39,6 +40,10 @@ class ThreatAnalyzer:
             rule_start = time.monotonic()
             events = rule(raw_data)
             elapsed_ms = round((time.monotonic() - rule_start) * 1000)
+
+            rule_execution_duration_seconds.labels(
+                rule_name=rule.__name__
+            ).observe((time.monotonic() - rule_start))
             
             logger.info("rule_executed",
                 rule_name=rule.__name__,

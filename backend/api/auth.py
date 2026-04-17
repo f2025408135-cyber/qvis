@@ -9,6 +9,7 @@ from fastapi import Request, HTTPException, Depends
 from fastapi.security import APIKeyHeader
 
 from backend.config import settings
+from backend.metrics import api_auth_failures_total
 
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -39,12 +40,15 @@ async def verify_api_key(request: Request, api_key: Optional[str] = Depends(API_
     expected_hash = _get_hashed_key()
     if not expected_hash:
         # Auth enabled but no key configured — deny all
+        api_auth_failures_total.inc()
         raise HTTPException(status_code=401, detail="Server not configured for authentication")
 
     if not api_key:
+        api_auth_failures_total.inc()
         raise HTTPException(status_code=401, detail="API key required")
 
     if not secrets.compare_digest(_hash_key(api_key), expected_hash):
+        api_auth_failures_total.inc()
         raise HTTPException(status_code=403, detail="Invalid API key")
 
     return True

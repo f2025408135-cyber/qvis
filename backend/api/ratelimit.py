@@ -8,6 +8,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from backend.config import settings
+from backend.metrics import rate_limit_exceeded_total
 
 # Maximum tracked IPs to prevent memory exhaustion
 _MAX_TRACKED_IPS = 10000
@@ -101,6 +102,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         estimated = prev_count * (1.0 - window_position) + curr_count
 
         if estimated >= max_requests:
+            rate_limit_exceeded_total.labels(endpoint=path).inc()
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Rate limit exceeded. Try again later."},

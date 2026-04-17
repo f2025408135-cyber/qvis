@@ -4,6 +4,11 @@ from typing import List, Optional
 from fastapi import WebSocket, WebSocketDisconnect
 import structlog
 from backend.threat_engine.models import SimulationSnapshot
+from backend.metrics import (
+    websocket_connections_active,
+    websocket_messages_sent_total,
+    websocket_errors_total,
+)
 
 logger = structlog.get_logger()
 
@@ -52,6 +57,7 @@ class ConnectionManager:
         await websocket.accept()
         self.active_connections.append(websocket)
         logger.info("websocket_connected", total_connections=len(self.active_connections))
+        websocket_connections_active.set(len(self.active_connections))
         return True
 
     def disconnect(self, websocket: WebSocket):
@@ -61,20 +67,24 @@ class ConnectionManager:
             self._per_client_msg_count.pop(client_id, None)
             self._per_client_window_start.pop(client_id, None)
             logger.info("websocket_disconnected", total_connections=len(self.active_connections))
+            websocket_connections_active.set(len(self.active_connections))
 
     async def send_personal_message(self, message: str, websocket: WebSocket):
         try:
             await websocket.send_text(message)
         except Exception as e:
             logger.error("websocket_send_error", error=str(e))
+            websocket_errors_total.inc()
             self.disconnect(websocket)
 
     async def broadcast(self, message: str):
         for connection in self.active_connections:
             try:
                 await connection.send_text(message)
+                websocket_messages_sent_total.inc()
             except Exception as e:
                 logger.error("websocket_broadcast_error", error=str(e))
+                websocket_errors_total.inc()
                 self.disconnect(connection)
 
     async def broadcast_snapshot(self, snapshot: SimulationSnapshot):
