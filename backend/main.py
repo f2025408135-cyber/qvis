@@ -4,19 +4,47 @@ import asyncio
 import os
 import time
 import json
-import logging
 import uuid
-import structlog
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import List, Optional
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 
+from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_client import make_asgi_app
+from backend.metrics import (
+    threats_detected_total,
+    threats_active,
+    simulation_loop_duration_seconds,
+    simulation_loop_cycles_total,
+    simulation_loop_errors_total,
+    collector_poll_duration_seconds,
+    collector_backends_discovered,
+    collector_errors_total,
+    websocket_connections_active,
+    websocket_messages_sent_total,
+    websocket_errors_total,
+    baseline_anomalies_total,
+    api_auth_failures_total,
+    rate_limit_exceeded_total,
+    campaign_correlations_total,
+    rule_execution_duration_seconds,
+)
+
 from backend.config import settings
+from backend.logging_config import configure_logging
+
+# Configure logging immediately after settings are loaded
+configure_logging(settings)
+
+import structlog
+logger = structlog.get_logger(__name__)
+
 from backend.api.websocket import manager
 from backend.api.auth import verify_api_key, _hash_key, _get_hashed_key
 from backend.api.security_headers import SecurityHeadersMiddleware
@@ -27,56 +55,6 @@ from backend.threat_engine.baseline import BaselineManager
 from backend.threat_engine.models import SimulationSnapshot, BackendNode, ThreatEvent, Severity
 from backend.threat_engine.rules import load_threshold_config_from_file, set_threshold_config, get_threshold_config
 from backend.storage.database import init_db, close_db
-
-# ─── Logging Configuration ─────────────────────────────────────────────
-def _configure_logging():
-    """Configure structlog based on settings."""
-    log_level = settings.log_level.upper()
-    log_format = settings.log_format
-
-    # Map string level to Python logging constant
-    level_map = {
-        "DEBUG": logging.DEBUG,
-        "INFO": logging.INFO,
-        "WARNING": logging.WARNING,
-        "ERROR": logging.ERROR,
-        "CRITICAL": logging.CRITICAL,
-    }
-    level = level_map.get(log_level, logging.INFO)
-
-    logging.basicConfig(
-        format="%(message)s",
-        level=level,
-    )
-
-    if log_format == "json":
-        structlog.configure(
-            processors=[
-                structlog.contextvars.merge_contextvars,
-                structlog.processors.add_log_level,
-                structlog.processors.JSONRenderer(),
-            ],
-            wrapper_class=structlog.make_filtering_bound_logger(level),
-            context_class=dict,
-            logger_factory=structlog.PrintLoggerFactory(),
-            cache_logger_on_first_use=True,
-        )
-    else:
-        structlog.configure(
-            processors=[
-                structlog.contextvars.merge_contextvars,
-                structlog.processors.add_log_level,
-                structlog.dev.ConsoleRenderer(),
-            ],
-            wrapper_class=structlog.make_filtering_bound_logger(level),
-            context_class=dict,
-            logger_factory=structlog.PrintLoggerFactory(),
-            cache_logger_on_first_use=True,
-        )
-
-
-_configure_logging()
-logger = structlog.get_logger()
 
 # ─── Application State ─────────────────────────────────────────────────
 latest_snapshot: Optional[SimulationSnapshot] = None
@@ -152,14 +130,28 @@ async def simulation_loop():
     global latest_snapshot
     github_last_run = 0
     github_results = []
+    cycle_count = 0
 
     while True:
         try:
+            cycle_count += 1
             start = time.monotonic()
-            snapshot = await collector.collect()
-            elapsed = time.monotonic() - start
+            logger.info("simulation_loop_start", cycle=cycle_count)
+            simulation_loop_cycles_total.inc()
 
-            logger.info("collection_completed", source=collector.__class__.__name__, elapsed_ms=round(elapsed * 1000))
+            with simulation_loop_duration_seconds.time():
+                snapshot = await collector.collect()
+                elapsed = time.monotonic() - start
+
+                # Record collection metrics
+                collector_backends_discovered.labels(
+                    collector_type=collector.__class__.__name__
+                ).set(len(snapshot.backends))
+
+                logger.info("collection_complete",
+                    collector=collector.__class__.__name__,
+                    backends_count=len(snapshot.backends),
+                    duration_ms=round(elapsed * 1000))
 
             # Integrate GitHub scanning selectively (every 5 minutes to respect rate limits)
             if github_scanner and (time.time() - github_last_run > 300):
@@ -173,6 +165,14 @@ async def simulation_loop():
             # Always analyze the SimulationSnapshot (not a raw dict) so
             # analyze() returns a SimulationSnapshot — not a bare list.
             enriched_snapshot = analyzer.analyze(snapshot)
+
+            # Record threats_detected_total for each new threat
+            for threat in snapshot.threats:
+                threats_detected_total.labels(
+                    severity=threat.severity.value if hasattr(threat.severity, "value") else str(threat.severity),
+                    technique_id=threat.technique_id,
+                    platform=threat.platform.value if hasattr(threat.platform, "value") else str(threat.platform),
+                ).inc()
 
             # If GitHub results are present, inject them and re-run only
             # RULE_001 against the raw dict, then merge any new threats.
@@ -221,6 +221,10 @@ async def simulation_loop():
                             visual_intensity=min(abs(z_t1) / 5.0, 1.0),
                             remediation=["Investigate qubit calibration drift.", "Check for external interference."]
                         ))
+                        baseline_anomalies_total.labels(
+                            backend_id=backend.id,
+                            metric_name=f"q{cal.qubit_id}_t1"
+                        ).inc()
                     # Check T2 coherence time
                     z_t2 = baseline_manager.check(backend.id, f"q{cal.qubit_id}_t2", cal.t2_us)
                     if z_t2 is not None:
@@ -239,6 +243,10 @@ async def simulation_loop():
                             visual_intensity=min(abs(z_t2) / 5.0, 1.0),
                             remediation=["Investigate qubit calibration drift.", "Check for external interference."]
                         ))
+                        baseline_anomalies_total.labels(
+                            backend_id=backend.id,
+                            metric_name=f"q{cal.qubit_id}_t2"
+                        ).inc()
 
             # Build the set of keys that THIS cycle's baseline check produced.
             # Any previously-seen baseline key that is NOT in this set is stale
@@ -275,6 +283,9 @@ async def simulation_loop():
             if campaign_events:
                 for ce in campaign_events:
                     analyzer.active_threats[(ce.backend_id, ce.technique_id)] = ce
+                    campaign_correlations_total.labels(
+                        pattern_name=ce.technique_name
+                    ).inc()
                 enriched_snapshot.threats.extend(campaign_events)
                 enriched_snapshot.threats.sort(
                     key=lambda x: {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}.get(
@@ -335,12 +346,21 @@ async def simulation_loop():
                 latest_snapshot = enriched_snapshot.model_copy(deep=False)
 
             await manager.broadcast_snapshot(enriched_snapshot)
-            logger.info("snapshot_broadcasted", snapshot_id=enriched_snapshot.snapshot_id)
+            
+            elapsed_ms = round((time.monotonic() - start) * 1000)
+            logger.info("simulation_loop_complete",
+                cycle=cycle_count,
+                threats_active=len(analyzer.active_threats),
+                duration_ms=elapsed_ms)
+            
             await asyncio.sleep(settings.update_interval_seconds)
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error("simulation_loop_error", error=str(e))
+            logger.error("simulation_loop_error",
+                cycle=cycle_count,
+                error=str(e),
+                exc_info=True)
             await asyncio.sleep(5)
 
 # ─── Lifespan ──────────────────────────────────────────────────────────
@@ -386,6 +406,9 @@ async def lifespan(app: FastAPI):
 
 # ─── FastAPI App ───────────────────────────────────────────────────────
 app = FastAPI(title="QVis API", lifespan=lifespan)
+
+# Instrument Prometheus metrics
+Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
 
 # ─── Request ID Middleware ─────────────────────────────────────────

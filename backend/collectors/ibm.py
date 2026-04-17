@@ -205,10 +205,20 @@ class IBMQuantumCollector(BaseCollector):
             )
             
             self.cached_last_snapshot = snapshot
+            
+            elapsed_ms = round((time.monotonic() - start_time) * 1000)
+            logger.info("collection_complete",
+                collector=self.__class__.__name__,
+                backends_count=len(nodes),
+                duration_ms=elapsed_ms)
+            
             return snapshot
             
         except Exception as e:
-            logger.error("ibm_collector_error", error=str(e))
+            logger.error("collection_failed",
+                collector=self.__class__.__name__,
+                error=str(e),
+                exc_info=True)
             
             if self.cached_last_snapshot:
                 logger.warning("using_cached_snapshot_due_to_error")

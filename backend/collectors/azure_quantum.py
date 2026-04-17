@@ -1,6 +1,7 @@
 """Azure Quantum collector — read-only workspace and target metadata."""
 
 import uuid
+import time
 import structlog
 import asyncio
 from datetime import datetime, timezone
@@ -11,7 +12,7 @@ from backend.threat_engine.models import (
     SimulationSnapshot, BackendNode, Platform, Severity, QubitCalibration
 )
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 class AzureQuantumCollector(BaseCollector):
@@ -93,14 +94,23 @@ class AzureQuantumCollector(BaseCollector):
             )
 
             self._cached_snapshot = snapshot
-            logger.info("azure_collection_complete", target_count=len(nodes))
+            
+            elapsed_ms = round((time.monotonic() - start_time) * 1000) if 'start_time' in locals() else 0
+            logger.info("collection_complete",
+                collector=self.__class__.__name__,
+                backends_count=len(nodes),
+                duration_ms=elapsed_ms)
+            
             return snapshot
 
         except ImportError:
             logger.warning("azure_quantum_sdk_not_installed_using_mock")
             return self._mock_azure_snapshot()
         except Exception as e:
-            logger.error("azure_collector_error", error=str(e))
+            logger.error("collection_failed",
+                collector=self.__class__.__name__,
+                error=str(e),
+                exc_info=True)
             if self._cached_snapshot:
                 return self._cached_snapshot
             return self._mock_azure_snapshot()
