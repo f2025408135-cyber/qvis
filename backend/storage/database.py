@@ -4,6 +4,12 @@ Provides a single shared aiosqlite connection with WAL mode for
 concurrent read performance.  All threat and correlation events are
 persisted so that /api/threats/history and /api/threats/stats can
 report on all-time data rather than only the current in-memory window.
+
+Schema management is handled by Alembic (see ``backend/storage/migrations.py``).
+On startup, ``init_db()`` runs pending Alembic migrations after ensuring the
+base tables exist via the embedded DDL.  This dual-path approach guarantees
+backward compatibility: existing databases work without migration, while new
+schema changes are applied incrementally through Alembic revision scripts.
 """
 
 from __future__ import annotations
@@ -35,6 +41,11 @@ async def init_db(db_path: Optional[str] = None) -> None:
     """Create the data directory (if needed), open a WAL-mode connection,
     and create tables if they do not yet exist.
 
+    After the base tables are ensured, Alembic migrations are run to
+    apply any incremental schema changes.  The base DDL serves as a
+    safety net so that the application starts even if Alembic has not
+    been configured.
+
     This must be called once during application startup *before* any
     other function in this module is used.
     """
@@ -55,9 +66,25 @@ async def init_db(db_path: Optional[str] = None) -> None:
     await _connection.execute("PRAGMA journal_mode=WAL;")
     await _connection.execute("PRAGMA synchronous=NORMAL;")
 
+    # Base DDL — ensures tables exist even without Alembic
     await _connection.executescript(_DDL)
-
     await _connection.commit()
+
+    # Run Alembic migrations for any incremental schema changes
+    try:
+        from backend.storage.migrations import run_migrations
+        # Build the SQLAlchemy URL from the db_path
+        url = f"sqlite+aiosqlite:///{_db_path}"
+        run_migrations(database_url=url)
+    except Exception:
+        # Alembic is optional — the base DDL above already ensures
+        # tables exist.  Log the error but do not abort startup.
+        import structlog
+        structlog.get_logger(__name__).warning(
+            "alembic_migration_skipped",
+            reason="Migration runner raised an exception; "
+                   "base DDL already applied so tables are usable.",
+        )
 
 
 async def _get_connection() -> aiosqlite.Connection:

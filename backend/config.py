@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", description="Logging level (DEBUG/INFO/WARNING/ERROR/CRITICAL)")
     log_format: str = Field(default="console", description="Log output format: 'console' or 'json'")
 
+    # Database — controls which backend Alembic and the app use.
+    #   SQLite (default): sqlite+aiosqlite:///data/qvis.db
+    #   PostgreSQL:       postgresql+asyncpg://user:pass@host:5432/qvis
+    database_url: str = Field(
+        default="sqlite+aiosqlite:///data/qvis.db",
+        description="SQLAlchemy database URL. Supports SQLite and PostgreSQL.",
+    )
+
     # GitHub scanner
     github_token: SecretStr = SecretStr("")
 

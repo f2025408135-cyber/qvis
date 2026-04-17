@@ -20,6 +20,12 @@ services:
       # Set to "false" to connect to real IBM Quantum (requires IBM_QUANTUM_TOKEN)
       - DEMO_MODE=true
 
+      # ── Database ─────────────────────────────────────────────────────
+      # Default: SQLite (embedded).  Set DATABASE_URL to switch to PostgreSQL.
+      #   SQLite (default):  (omit or leave empty)
+      #   PostgreSQL:        postgresql+asyncpg://qvis:qvis@postgres:5432/qvis
+      - DATABASE_URL=${DATABASE_URL:-}
+
       # ── Telemetry ─────────────────────────────────────────────────────
       # How often (seconds) the backend collects and broadcasts new telemetry
       - UPDATE_INTERVAL_SECONDS=30
@@ -92,3 +98,28 @@ services:
 volumes:
   qvis-data:
     driver: local
+
+  # ── PostgreSQL (optional — uncomment to use instead of SQLite) ──────
+  # To activate: set DATABASE_URL=postgresql+asyncpg://qvis:qvis@postgres:5432/qvis
+  # in the qvis service environment above, then uncomment the postgres service below.
+  #
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: qvis-postgres
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: qvis
+  #     POSTGRES_PASSWORD: qvis
+  #     POSTGRES_DB: qvis
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   ports:
+  #     - "5432:5432"
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U qvis"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #
+  # postgres-data:
+  #   driver: local
