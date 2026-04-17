@@ -11,15 +11,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
+        # X-XSS-Protection removed — deprecated since Chrome 78 (2019).
+        # CSP script-src directive provides equivalent XSS protection.
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = (
             "camera=(), microphone=(), geolocation=()"
         )
-        # CSP hardened: removed 'unsafe-eval' and 'unsafe-inline'.
-        # Three.js r128 uses inline shaders via <script> tags, so we must
-        # allow 'unsafe-inline' for script-src in the current architecture.
-        # 'unsafe-eval' is removed — no eval() needed by any of our code.
+        # CSP hardened: 'unsafe-eval' removed (no eval() needed by our code).
+        # 'unsafe-inline' retained for Three.js inline shaders via <script> tags.
         # blob: is needed for Swagger UI web workers.
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "

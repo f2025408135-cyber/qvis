@@ -21,7 +21,8 @@ class ConnectionManager:
 
     def _check_message_rate(self, websocket: WebSocket) -> bool:
         """Check if a client is sending too many messages. Returns True if allowed."""
-        now = asyncio.get_event_loop().time()
+        import time as _time
+        now = _time.monotonic()
         client_id = id(websocket)
 
         if client_id not in self._per_client_window_start:

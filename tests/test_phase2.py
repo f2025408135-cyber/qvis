@@ -34,7 +34,7 @@ class TestRule009:
         }
         events = RULE_009_concurrent_multi_backend_probing(data)
         assert len(events) == 1
-        assert events[0].technique_id == "QTT012"
+        assert events[0].technique_id == "QTT001"
         assert events[0].severity == Severity.high
 
     def test_ignores_single_backend_access(self):
@@ -69,7 +69,7 @@ class TestRule010:
         }
         events = RULE_010_anomalous_circuit_composition(data)
         assert len(events) == 1
-        assert events[0].technique_id == "QTT013"
+        assert events[0].technique_id == "QTT009"
 
     def test_ignores_normal_circuit_composition(self):
         data = {

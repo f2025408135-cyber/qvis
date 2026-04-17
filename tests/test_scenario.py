@@ -66,12 +66,12 @@ class TestScenarioCollector:
         for _ in range(len(sc.steps) + 2):
             snapshot = _run(sc.collect())
             for t in snapshot.threats:
-                if t.technique_id == "QTT017":
+                if t.technique_id == "QTT007":
                     found = True
                     break
             if found:
                 break
-        assert found, "credential_exploit scenario should contain QTT017 threat"
+        assert found, "credential_exploit scenario should contain QTT007 threat"
 
     def test_recon_scenario_has_campaign_event(self):
         sc = ScenarioCollector()

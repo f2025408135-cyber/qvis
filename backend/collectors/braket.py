@@ -77,11 +77,21 @@ class BraketCollector(BaseCollector):
                     for qid_str, qprops in one_qubit.items():
                         try:
                             qid = int(qid_str)
-                            t1 = qprops.get("oneQubitFidelity", [{}])[0].get("fidelity", 0.999)
-                            # Braket reports fidelity, convert to approximate T1/T2 in us
-                            t1_us = t1 * 120.0
+                            fidelity_data = qprops.get("oneQubitFidelity", [])
+                            if not fidelity_data:
+                                continue
+                            fidelity = fidelity_data[0].get("fidelity", None)
+                            if fidelity is None:
+                                continue
+                            ro_err = 1.0 - fidelity
+                            # NOTE: Fidelity alone cannot reliably predict T1/T2.
+                            # Different qubit technologies (superconducting, ion
+                            # trap, photonic) have vastly different coherence
+                            # characteristics.  We record readout_error (derived
+                            # from fidelity) but set T1/T2 to defaults rather
+                            # than fabricating a number from a linear heuristic.
+                            t1_us = 100.0  # Conservative default placeholder
                             t2_us = t1_us * 0.7
-                            ro_err = 1.0 - qprops.get("oneQubitFidelity", [{}])[0].get("fidelity", 0.999)
                             cal_data.append(QubitCalibration(
                                 qubit_id=qid,
                                 t1_us=round(t1_us, 2),

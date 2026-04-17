@@ -25,6 +25,8 @@ from backend.threat_engine.analyzer import ThreatAnalyzer
 from backend.threat_engine.correlator import ThreatCorrelator
 from backend.threat_engine.baseline import BaselineManager
 from backend.threat_engine.models import SimulationSnapshot, BackendNode, ThreatEvent, Severity
+from backend.threat_engine.rules import load_threshold_config_from_file, set_threshold_config, get_threshold_config
+from backend.storage.database import init_db, close_db
 
 # ─── Logging Configuration ─────────────────────────────────────────────
 def _configure_logging():
@@ -83,6 +85,14 @@ analyzer = ThreatAnalyzer()
 correlator = ThreatCorrelator()
 baseline_manager = BaselineManager(z_threshold=2.5)
 github_scanner = None
+
+# ─── Load calibrated thresholds if calibration_results.json exists ──────
+_cal = load_threshold_config_from_file()
+if _cal is not None:
+    set_threshold_config(_cal)
+    logger.info("calibration_loaded", thresholds={k: v for k, v in _cal.__dict__.items() if v is not None})
+else:
+    logger.info("no_calibration_file_using_defaults")
 
 # ─── Collector Strategy ────────────────────────────────────────────────
 if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("USE_MOCK") == "true":
@@ -160,12 +170,30 @@ async def simulation_loop():
                 except Exception as e:
                     logger.error("github_scan_loop_error", error=str(e))
 
+            # Always analyze the SimulationSnapshot (not a raw dict) so
+            # analyze() returns a SimulationSnapshot — not a bare list.
+            enriched_snapshot = analyzer.analyze(snapshot)
+
+            # If GitHub results are present, inject them and re-run only
+            # RULE_001 against the raw dict, then merge any new threats.
             if github_results:
                 raw_dict = snapshot.model_dump()
                 raw_dict["github_search_results"] = github_results
-                enriched_snapshot = analyzer.analyze(raw_dict)
-            else:
-                enriched_snapshot = analyzer.analyze(snapshot)
+                from backend.threat_engine.rules import RULE_001_credential_leak_github_search
+                gh_events = RULE_001_credential_leak_github_search(raw_dict)
+                if gh_events:
+                    for ev in gh_events:
+                        key = (ev.backend_id, ev.technique_id)
+                        if key not in analyzer.active_threats:
+                            analyzer.active_threats[key] = ev
+                            enriched_snapshot.threats.append(ev)
+                    enriched_snapshot.threats.sort(
+                        key=lambda x: {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}.get(
+                            x.severity.value if hasattr(x.severity, "value") else str(x.severity), 99
+                        )
+                    )
+                    enriched_snapshot.total_threats = len(enriched_snapshot.threats)
+                    logger.info("github_threats_detected", count=len(gh_events))
 
             latest_snapshot = enriched_snapshot
 
@@ -212,12 +240,35 @@ async def simulation_loop():
                             remediation=["Investigate qubit calibration drift.", "Check for external interference."]
                         ))
 
+            # Build the set of keys that THIS cycle's baseline check produced.
+            # Any previously-seen baseline key that is NOT in this set is stale
+            # and must be removed so the anomaly doesn't persist forever.
+            current_baseline_keys: set = set()
             if baseline_threats:
                 for bt in baseline_threats:
-                    analyzer.active_threats[(bt.backend_id, bt.technique_id + bt.id)] = bt
+                    bl_key = (bt.backend_id, bt.technique_id + bt.id)
+                    analyzer.active_threats[bl_key] = bt
+                    current_baseline_keys.add(bl_key)
+                # Remove stale baseline threats that are no longer anomalous
+                stale_keys = [
+                    k for k in analyzer.active_threats
+                    if k[1].startswith("QTT014baseline-") and k not in current_baseline_keys
+                ]
+                for sk in stale_keys:
+                    del analyzer.active_threats[sk]
+                    logger.info("baseline_anomaly_resolved", key=sk)
                 enriched_snapshot.threats.extend(baseline_threats)
                 enriched_snapshot.total_threats = len(enriched_snapshot.threats)
                 logger.info("baseline_anomalies_detected", count=len(baseline_threats))
+            else:
+                # No baseline anomalies this cycle — clear any lingering ones
+                stale_keys = [
+                    k for k in analyzer.active_threats
+                    if k[1].startswith("QTT014baseline-")
+                ]
+                for sk in stale_keys:
+                    del analyzer.active_threats[sk]
+                    logger.info("baseline_anomaly_resolved", key=sk)
 
             # Run cross-rule correlation on new threats
             campaign_events = correlator.correlate(enriched_snapshot.threats)
@@ -232,6 +283,51 @@ async def simulation_loop():
                 )
                 enriched_snapshot.total_threats = len(enriched_snapshot.threats)
                 logger.info("campaigns_detected", count=len(campaign_events))
+
+            # ── Persist new threats and resolve disappeared ones ────────
+            try:
+                saved = await analyzer.persist_new_threats()
+                if saved:
+                    logger.info("threats_persisted", count=len(saved))
+                # Persist correlation events to their own table
+                if campaign_events:
+                    from backend.storage.database import save_correlation
+                    for ce in campaign_events:
+                        try:
+                            # Scope techniques and backends to THIS campaign's
+                            # backend only — without filtering, threats from
+                            # unrelated backends leak into the correlation record.
+                            campaign_techniques = ce.evidence.get("techniques_found") or []
+                            scoped_techniques = [
+                                t.technique_id for t in enriched_snapshot.threats
+                                if t.technique_id in campaign_techniques
+                                and t.backend_id == ce.backend_id
+                            ]
+                            scoped_backends = list({
+                                t.backend_id for t in enriched_snapshot.threats
+                                if t.technique_id in campaign_techniques
+                                and t.backend_id == ce.backend_id
+                                and t.backend_id
+                            })
+                            await save_correlation(
+                                id=ce.id,
+                                pattern_name=ce.technique_name,
+                                techniques=scoped_techniques,
+                                backends=scoped_backends,
+                                detected_at=ce.detected_at.isoformat()
+                                    if isinstance(ce.detected_at, datetime)
+                                    else str(ce.detected_at),
+                                severity=ce.severity.value
+                                    if hasattr(ce.severity, "value")
+                                    else str(ce.severity),
+                            )
+                        except Exception as exc:
+                            logger.warning("persist_correlation_failed", id=ce.id, error=str(exc))
+                resolved = await analyzer.resolve_disappeared_threats()
+                if resolved:
+                    logger.info("threats_resolved", count=len(resolved))
+            except Exception as db_exc:
+                logger.warning("persistence_error", error=str(db_exc))
 
             # Copy-on-write: atomically swap the snapshot so API reads
             # never see a partially-mutated object
@@ -252,9 +348,15 @@ async def simulation_loop():
 async def lifespan(app: FastAPI):
     """Manages application startup and teardown routines."""
 
+    # Initialise the SQLite database (tables + WAL mode)
+    await init_db()
+    from backend.storage.database import _db_path as _actual_db_path
+    logger.info("database_initialised", path=str(_actual_db_path))
+
     if "pytest" in str(os.environ):
         logger.info("testing_mode_detected_skipping_loop")
         yield
+        await close_db()
         return
 
     logger.info("starting_simulation_loop")
@@ -279,6 +381,7 @@ async def lifespan(app: FastAPI):
     yield
 
     task.cancel()
+    await close_db()
     logger.info("shutting_down_simulation_loop")
 
 # ─── FastAPI App ───────────────────────────────────────────────────────
@@ -415,11 +518,38 @@ async def export_threats_stix(
 
 # ─── Threat History Endpoint ───────────────────────────────────────────
 @app.get("/api/threats/history", tags=["threats"])
-async def get_threat_history(_auth: None = Depends(verify_api_key)):
-    """Returns deduplicated threat history from the analyzer."""
-    return [
-        t.model_dump() for t in analyzer.active_threats.values()
-    ]
+async def get_threat_history(
+    limit: int = Query(default=100, ge=1, le=1000, description="Max events to return"),
+    offset: int = Query(default=0, ge=0, le=100000, description="Events to skip"),
+    severity: Optional[str] = Query(default=None, description="Filter by severity"),
+    _auth: None = Depends(verify_api_key),
+):
+    """Returns paginated threat history from the persistent database.
+
+    This endpoint now reads from SQLite, giving all-time visibility
+    rather than only the current in-memory window.
+    """
+    from backend.storage.database import get_threats as db_get_threats
+    return await db_get_threats(limit=limit, offset=offset, severity_filter=severity)
+
+
+# ─── Threat Statistics Endpoint ────────────────────────────────────────
+@app.get("/api/threats/stats", tags=["threats"])
+async def get_threat_stats_endpoint(_auth: None = Depends(verify_api_key)):
+    """Returns aggregated statistics over all persisted threat events.
+
+    Response shape:
+    {
+        total_all_time: int,
+        by_severity: {severity: count, ...},
+        by_platform: {platform: count, ...},
+        by_technique: {technique_id: count, ...},
+        first_detected: str | null,  (ISO-8601)
+        last_detected: str | null   (ISO-8601)
+    }
+    """
+    from backend.storage.database import get_threat_stats as db_get_stats
+    return await db_get_stats()
 
 # ─── Scenario Endpoints ──────────────────────────────────────────────
 active_scenario = {"name": None}
@@ -486,13 +616,10 @@ async def websocket_endpoint(websocket: WebSocket):
     if not connected:
         return
 
-    # Set a max message size on the underlying socket (Starlette/uvicorn level)
-    try:
-        # Some ASGI servers support max_size; silently continue if not
-        if hasattr(websocket, '_max_size'):
-            websocket._max_size = MAX_MESSAGE_SIZE
-    except Exception:
-        pass
+    # NOTE: message size is enforced by ConnectionManager.validate_message()
+    # in the receive loop below.  We intentionally do NOT try to set
+    # websocket._max_size because it is a private implementation detail
+    # that varies across ASGI servers and may not exist or be writable.
 
     try:
         snapshot = await _ensure_snapshot()
@@ -576,3 +703,78 @@ async def serve_frontend(full_path: str):
         from starlette.responses import FileResponse
         return FileResponse(index_file)
     raise HTTPException(status_code=404, detail="Frontend not found")
+
+
+# ─── CLI: Calibration Mode ─────────────────────────────────────────────
+# Usage:  python -m backend.main --calibrate [duration_minutes]
+#
+# Runs the live IBM Quantum collector for the given duration (default 60
+# minutes), computes p95-based thresholds, saves them to
+# calibration_results.json, and exits.  Requires a valid
+# IBM_QUANTUM_TOKEN in the environment.
+
+import sys
+
+def _cli_calibrate_mode() -> bool:
+    """Check if --calibrate was passed and handle it. Returns True if
+    the process should exit after calibration completes."""
+    args = sys.argv[1:]
+    if "--calibrate" not in args:
+        return False
+
+    idx = args.index("--calibrate")
+    duration = 60
+    if idx + 1 < len(args):
+        try:
+            duration = int(args[idx + 1])
+        except ValueError:
+            pass
+
+    import asyncio as _aio
+    from backend.collectors.ibm import IBMQuantumCollector
+    from backend.collectors.calibrator import ThresholdCalibrator
+
+    token = os.getenv("IBM_QUANTUM_TOKEN", "")
+    if not token:
+        print("ERROR: --calibrate requires IBM_QUANTUM_TOKEN to be set.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"QVis Threshold Calibration Mode")
+    print(f"===================================")
+    print(f"Duration : {duration} minutes")
+    print(f"Collector: IBMQuantumCollector (live)")
+    print(f"Output   : calibration_results.json")
+    print()
+
+    collector = IBMQuantumCollector(ibm_token=token)
+    cal = ThresholdCalibrator(collector)
+
+    result = _aio.run(cal.calibrate(duration_minutes=duration))
+    path = result.save()
+
+    print()
+    print(f"Calibration complete. Results saved to: {path}")
+    print()
+    print("Recommended thresholds:")
+    for field in [
+        "rule_002_calibration_harvest_ratio",
+        "rule_003_identity_gate_ratio",
+        "rule_003_max_circuit_gates",
+        "rule_005_max_depth_ratio",
+        "rule_008_t1_baseline_ratio",
+        "rule_009_min_backends_accessed",
+        "rule_010_measure_ratio",
+        "rule_010_min_circuit_gates",
+    ]:
+        val = getattr(result, field, None)
+        label = field.replace("rule_", "RULE_").replace("_", " ").title()
+        if val is not None:
+            print(f"  {label:45s} = {val}")
+        else:
+            print(f"  {label:45s} = (insufficient data, using default)")
+    sys.exit(0)
+
+
+# Run CLI check before FastAPI app creation so --calibrate exits cleanly
+if _cli_calibrate_mode():
+    pass  # sys.exit(0) already called inside

@@ -18,7 +18,7 @@ def test_rule_001_detects_credential_exposure_in_search_results():
     data = {"github_search_results": [{"repo": "test", "pattern": "QiskitRuntimeService(token='valid123')"}]}
     events = RULE_001_credential_leak_github_search(data)
     assert len(events) == 1
-    assert events[0].technique_id == "QTT017"
+    assert events[0].technique_id == "QTT007"
 
 def test_rule_001_ignores_placeholder_tokens():
     data = {"github_search_results": [{"repo": "test", "pattern": "QiskitRuntimeService(token='YOUR_TOKEN')"}]}
@@ -52,7 +52,7 @@ def test_rule_004_cross_tenant_id_probing():
     data = {"failed_job_access_attempts": [1,2,3,4,5,6]}
     events = RULE_004_cross_tenant_id_probing(data)
     assert len(events) == 1
-    assert events[0].technique_id == "QTT009"
+    assert events[0].technique_id == "QTT004"
 
 def test_rule_005_resource_exhaustion_circuit():
     data = {"recent_jobs": [{"depth": 90, "max_allowed_depth": 100}]}
@@ -64,7 +64,7 @@ def test_rule_006_detects_sequential_404_idor_pattern():
     data = {"api_error_log": {"sequential_404_count": 12}}
     events = RULE_006_ip_extraction_idor(data)
     assert len(events) == 1
-    assert events[0].technique_id == "QTT011"
+    assert events[0].technique_id == "QTT006"
     assert events[0].visual_effect == "vortex"
 
 def test_rule_007_token_scope_violation():
@@ -77,7 +77,7 @@ def test_rule_008_backend_health_anomaly():
     data = {"baseline_calibration": {"0": {"t1_us": 100}}, "calibration": [{"qubit_id": 0, "t1_us": 50}]}
     events = RULE_008_backend_health_anomaly(data)
     assert len(events) == 1
-    assert events[0].technique_id == "HEALTH"
+    assert events[0].technique_id == "QTT010"
 
 def test_analyzer_deduplicates_same_technique_within_window():
     analyzer = ThreatAnalyzer()

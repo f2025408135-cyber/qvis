@@ -31,7 +31,8 @@ class GitHubTokenScanner:
         Returns:
             List of matching result dictionaries.
         """
-        url = f"https://api.github.com/search/code?q={query}"
+        from urllib.parse import quote as _url_quote
+        url = f"https://api.github.com/search/code?q={_url_quote(query)}"
         results = []
         
         try:
@@ -52,11 +53,18 @@ class GitHubTokenScanner:
                     repo_name = item.get("repository", {}).get("full_name", "unknown")
                     file_path = item.get("path", "unknown")
                     
-                    # Extract the matched text if available
-                    match_text = "QiskitRuntimeService(token='***')"
+                    # Extract the matched text if available;
+                    # only include it when GitHub actually returned a
+                    # text fragment — never fabricate a placeholder.
+                    match_text = None
                     text_matches = item.get("text_matches", [])
                     if text_matches:
-                        match_text = text_matches[0].get("fragment", match_text)
+                        match_text = text_matches[0].get("fragment", None)
+
+                    if not match_text:
+                        # Skip entries without a visible match — they
+                        # are not useful as threat evidence.
+                        continue
                     
                     results.append({
                         "repo": repo_name,

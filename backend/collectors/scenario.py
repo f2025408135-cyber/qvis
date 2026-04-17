@@ -204,7 +204,7 @@ def _build_credential_exploit_scenario():
     s2["backends"][0]["threat_level"] = "critical"
     s2["threats"] = [
         _make_threat(
-            "scenario-cred-1", "QTT017", "Credential Exposure", "critical",
+            "scenario-cred-1", "QTT007", "Credential Exposure", "critical",
             "ibm_quantum", "ibm_sherbrooke",
             "Credential exposure in public notebook",
             "A valid IBM Quantum API token was found in a public GitHub repository.",
@@ -224,7 +224,7 @@ def _build_credential_exploit_scenario():
     s3["backends"][0]["threat_level"] = "critical"
     s3["threats"] = [
         _make_threat(
-            "scenario-cred-2", "QTT017", "Credential Exposure", "critical",
+            "scenario-cred-2", "QTT007", "Credential Exposure", "critical",
             "ibm_quantum", "ibm_sherbrooke",
             "Credential exposure in public notebook",
             "A valid IBM Quantum API token was found in a public GitHub repository.",
@@ -253,7 +253,7 @@ def _build_credential_exploit_scenario():
     s4["backends"][1]["threat_level"] = "medium"
     s4["threats"] = [
         _make_threat(
-            "scenario-cred-4", "QTT017", "Credential Exposure", "critical",
+            "scenario-cred-4", "QTT007", "Credential Exposure", "critical",
             "ibm_quantum", "ibm_sherbrooke",
             "Credential exposure in public notebook",
             "A valid IBM Quantum API token was found in a public GitHub repository.",
@@ -278,11 +278,11 @@ def _build_credential_exploit_scenario():
             "Credential exposure followed by timing oracle probes — possible active exploitation using leaked credentials.",
             {
                 "pattern_name": "Pre-Attack Staging",
-                "techniques_found": ["QTT017", "QTT003"],
+                "techniques_found": ["QTT007", "QTT003"],
                 "backend_id": "ibm_sherbrooke",
                 "window_minutes": 60,
                 "triggering_threats": [
-                    {"id": "scenario-cred-4", "technique": "QTT017", "severity": "critical"},
+                    {"id": "scenario-cred-4", "technique": "QTT007", "severity": "critical"},
                     {"id": "scenario-cred-5", "technique": "QTT003", "severity": "high"},
                 ],
             },

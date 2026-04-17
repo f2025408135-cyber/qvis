@@ -91,9 +91,12 @@ def export_stix_bundle(threats: List[ThreatEvent], limit: Optional[int] = None, 
     if limit is not None:
         paginated = paginated[:limit]
 
+    # Use a content-hash-based bundle ID for deterministic deduplication
+    # across repeated exports of the same threat set.
+    _content_key = ":".join(sorted(t.id for t in paginated)) or "empty"
     return {
         "type": "bundle",
-        "id": f"bundle--{uuid.uuid5(uuid.NAMESPACE_URL, f'qvis:bundle:{datetime.now(timezone.utc).isoformat()}')}",
+        "id": f"bundle--{uuid.uuid5(uuid.NAMESPACE_URL, f'qvis:bundle:{_content_key}')}",
         "objects": [threat_to_stix_indicator(t) for t in paginated],
         "x_qvis_pagination": {
             "total": len(threats),

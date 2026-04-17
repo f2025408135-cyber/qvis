@@ -18,14 +18,14 @@ CORRELATION_PATTERNS = [
     },
     {
         "name": "Pre-Attack Staging",
-        "techniques": ["QTT017", "QTT003"],
+        "techniques": ["QTT007", "QTT003"],
         "window_minutes": 60,
         "escalated_severity": Severity.critical,
         "description": "Credential exposure followed by timing oracle probes — possible active exploitation using leaked credentials.",
     },
     {
         "name": "Enumeration Campaign",
-        "techniques": ["QTT009", "QTT011"],
+        "techniques": ["QTT004", "QTT006"],
         "window_minutes": 15,
         "escalated_severity": Severity.critical,
         "description": "Systematic tenant probing combined with IDOR enumeration — active unauthorized access campaign.",
@@ -46,7 +46,23 @@ class ThreatCorrelator:
     def __init__(self, history_hours: float = 2.0, max_history: int = 500):
         self.recent_threats: List[ThreatEvent] = []
         self.max_history = max_history
+        # Validate that history_hours is at least as long as the
+        # longest correlation window so patterns can actually fire.
+        _max_window = max(p["window_minutes"] for p in CORRELATION_PATTERNS)
+        _min_hours = _max_window / 60.0
+        if history_hours < _min_hours:
+            import structlog as _sl
+            _sl.get_logger().warning(
+                "correlator_history_too_short",
+                requested_hours=history_hours,
+                minimum_hours=round(_min_hours, 2),
+                auto_corrected=True,
+            )
+            history_hours = _min_hours
         self.history_hours = history_hours
+        # Track campaign dedup keys independently from recent_threats so
+        # that pruning old events doesn't allow the same campaign to re-fire.
+        self._campaign_dedup: set = set()
 
     def correlate(self, new_threats: List[ThreatEvent]) -> List[ThreatEvent]:
         """Check new threats against recent history for correlation patterns.
@@ -61,11 +77,40 @@ class ThreatCorrelator:
             t for t in self.recent_threats if t.detected_at > cutoff
         ][-self.max_history:]
 
+        # Also prune campaign dedup keys: if none of the underlying threats
+        # for a pattern still exist in recent_threats, the campaign dedup
+        # marker should expire so a genuinely new occurrence can fire.
+        active_technique_ids = {t.technique_id for t in self.recent_threats}
+        expired_keys = {
+            key for key in self._campaign_dedup
+            if not any(tid in active_technique_ids for tid in self._techniques_for_key(key))
+        }
+        self._campaign_dedup -= expired_keys
+
         campaigns = []
         for pattern in CORRELATION_PATTERNS:
             campaigns.extend(self._check_pattern(pattern, new_threats, now))
 
         return campaigns
+
+    @staticmethod
+    def _techniques_for_key(pattern_key: str) -> set:
+        """Extract technique IDs from a CORR:backend:pattern key.
+
+        Parses the key using the known delimiter format
+        ``CORR:{backend_id}:{pattern_name}`` and looks up
+        CORRELATION_PATTERNS for the exact name (not suffix match).
+        """
+        # Key format: CORR:{backend_id}:{pattern_name}
+        # Split on the first two colons to isolate the pattern name.
+        parts = pattern_key.split(":", 2)
+        if len(parts) < 3:
+            return set()
+        pattern_name = parts[2]
+        for p in CORRELATION_PATTERNS:
+            if p["name"] == pattern_name:
+                return set(p["techniques"])
+        return set()
 
     def _check_pattern(self, pattern: dict, new_threats: List[ThreatEvent], now: datetime) -> List[ThreatEvent]:
         """Check if new threats complete a correlation pattern."""
@@ -96,14 +141,13 @@ class ThreatCorrelator:
             if required_techniques.issubset(found_techniques):
                 # Generate a campaign correlation ID to avoid duplicates
                 pattern_key = f"CORR:{backend_id}:{pattern['name']}"
-                # Check if we already generated a campaign for this
-                existing = [
-                    t for t in self.recent_threats
-                    if t.technique_id == pattern_key
-                    and t.backend_id == backend_id
-                ]
-                if existing:
+                # Use the separate dedup set so that pruning recent_threats
+                # doesn't allow the same campaign to re-fire within the
+                # correlator's history window.
+                if pattern_key in self._campaign_dedup:
                     continue
+
+                self._campaign_dedup.add(pattern_key)
 
                 campaign_event = ThreatEvent(
                     id=str(uuid.uuid4()),
@@ -138,5 +182,6 @@ class ThreatCorrelator:
         return campaigns
 
     def reset(self):
-        """Clear all correlation history."""
+        """Clear all correlation history and dedup markers."""
         self.recent_threats.clear()
+        self._campaign_dedup.clear()

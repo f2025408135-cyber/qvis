@@ -67,7 +67,7 @@ MOCK_DATA = {
   "threats": [
     {
       "id": "threat-1",
-      "technique_id": "QTT017",
+      "technique_id": "QTT007",
       "technique_name": "Credential Exposure",
       "severity": "critical",
       "platform": "ibm_quantum",
@@ -209,14 +209,16 @@ class MockCollector(BaseCollector):
             if len(data["threats"]) > 4 and random.random() > 0.5:
                 removed = data["threats"].pop(random.randrange(len(data["threats"])))
                 data["total_threats"] -= 1
-                data["threats_by_severity"][removed["severity"]] -= 1
+                sev_key = removed["severity"]
+                data["threats_by_severity"][sev_key] = max(0, data["threats_by_severity"].get(sev_key, 0) - 1)
             elif len(data["threats"]) < 10:
                 if data["threats"]:
                     new_threat = copy.deepcopy(random.choice(data["threats"]))
                     new_threat["id"] = f"threat-{uuid.uuid4()}"
                     data["threats"].append(new_threat)
                     data["total_threats"] += 1
-                    data["threats_by_severity"][new_threat["severity"]] += 1
+                    sev_key = new_threat["severity"]
+                    data["threats_by_severity"][sev_key] = data["threats_by_severity"].get(sev_key, 0) + 1
 
         self.base_data = data 
         

@@ -29,9 +29,11 @@ class TestSecurityHeaders:
         response = client.get("/api/health")
         assert response.headers.get("x-frame-options") == "DENY"
 
-    def test_xss_protection(self):
+    def test_xss_protection_removed(self):
+        """X-XSS-Protection was removed (deprecated since Chrome 78).
+        CSP script-src provides equivalent XSS protection."""
         response = client.get("/api/health")
-        assert response.headers.get("x-xss-protection") == "1; mode=block"
+        assert response.headers.get("x-xss-protection") is None
 
     def test_referrer_policy(self):
         response = client.get("/api/health")
@@ -98,8 +100,10 @@ class TestEnvSettings:
         assert s.log_level in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
         assert s.log_format in ("console", "json")
 
-    def test_settings_extra_fields_ignored(self):
-        """extra='ignore' means unknown .env fields won't crash."""
+    def test_settings_extra_fields_forbidden(self):
+        """extra='forbid' means unknown fields are rejected."""
+        import pytest as _pt
+        from pydantic import ValidationError
         from backend.config import Settings
-        s = Settings(UNKNOWN_FIELD="should_not_crash")
-        assert s.demo_mode is True
+        with _pt.raises(ValidationError):
+            Settings(UNKNOWN_FIELD="should_not_crash")

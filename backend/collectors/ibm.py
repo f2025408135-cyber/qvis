@@ -103,6 +103,17 @@ class IBMQuantumCollector(BaseCollector):
                                 
                                 if t1 < 1.0: t1 *= 1e6
                                 if t2 < 1.0: t2 *= 1e6
+                                # Guard: reject clearly corrupt values
+                                # (e.g. a real 0.5 us T1 would become 500000 us
+                                # which is physically implausible for
+                                # superconducting qubits).  Cap at 10 seconds.
+                                if t1 > 10_000_000 or t2 > 10_000_000:
+                                    logger.debug(
+                                        "implausible_coherence_value_skipped",
+                                        backend=backend_name, qubit=q_idx,
+                                        t1_us=t1, t2_us=t2,
+                                    )
+                                    continue
                                 
                                 cal_data.append(QubitCalibration(
                                     qubit_id=q_idx,
@@ -120,12 +131,13 @@ class IBMQuantumCollector(BaseCollector):
                         jobs = await asyncio.to_thread(jobs_call, limit=10, backend_name=backend_name)
                     else:
                         jobs = []
+                    config = locals().get('config')  # None if inner try-block failed
                     for j in jobs:
                         job_info = {
                             "job_id": j.job_id() if callable(j.job_id) else j.job_id,
                             "backend_id": backend_name,
                             "status": j.status().name if callable(j.status) else j.status,
-                            "max_allowed_depth": getattr(config, 'max_experiments', 100) if 'config' in locals() else 100
+                            "max_allowed_depth": getattr(config, 'max_experiments', 100) if config else 100
                         }
                         try:
                             circuits = j.inputs.get("circuits", [])
@@ -145,10 +157,13 @@ class IBMQuantumCollector(BaseCollector):
                 threat_level = Severity.info
                 if cal_data:
                     for cal in cal_data:
-                        if cal.t1_us > 0 and cal.t1_us < 30.0 or cal.readout_error > 0.05:
+                        # Parens required: Python's `and` binds tighter than
+                        # `or`, so without them the readout_error check
+                        # fires independently of the t1_us > 0 guard.
+                        if cal.t1_us > 0 and (cal.t1_us < 30.0 or cal.readout_error > 0.05):
                             threat_level = Severity.high
                             break
-                        elif cal.t1_us > 0 and cal.t1_us < 60.0 or cal.readout_error > 0.02:
+                        elif cal.t1_us > 0 and (cal.t1_us < 60.0 or cal.readout_error > 0.02):
                             threat_level = Severity.medium
                 
                 api_surface_score = (n_qubits / 127.0) * (1.0 if is_simulator else 0.7)

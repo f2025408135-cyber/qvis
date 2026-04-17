@@ -3,7 +3,7 @@ from pydantic import Field, SecretStr
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="forbid")
 
     demo_mode: bool = True
     update_interval_seconds: int = 30
