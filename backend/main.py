@@ -429,8 +429,19 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="QVis API", lifespan=lifespan)
 
 # Instrument Prometheus metrics
-Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+# Instrument Prometheus metrics
+instrumentator = Instrumentator().instrument(app)
+# We manually expose it below to add authentication
 
+
+
+
+
+@app.get("/metrics")
+async def metrics_endpoint(api_key: str = Depends(verify_api_key)):
+    from starlette.responses import Response
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 # ─── Request ID Middleware ─────────────────────────────────────────
 class RequestIDMiddleware(BaseHTTPMiddleware):

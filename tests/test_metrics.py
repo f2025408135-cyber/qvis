@@ -1,3 +1,5 @@
+from pydantic import SecretStr
+from unittest.mock import patch
 """Comprehensive tests for QVis Prometheus metrics system.
 
 Validates:
@@ -302,3 +304,17 @@ class TestMetricsIntegration:
         """analyzer.py should import and use rule_execution_duration_seconds."""
         import backend.threat_engine.analyzer as analyzer_mod
         assert hasattr(analyzer_mod, "rule_execution_duration_seconds")
+
+    @pytest.mark.asyncio
+    async def test_metrics_endpoint_requires_auth_when_enabled(self):
+        """When AUTH_ENABLED=True, /metrics requires valid API key."""
+        from backend.main import app
+        
+        with patch("backend.api.auth.settings.auth_enabled", True), \
+             patch("backend.api.auth.settings.api_key", SecretStr("secret")):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get("/metrics")
+            
+            assert response.status_code in [401, 403]
+
