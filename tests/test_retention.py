@@ -502,7 +502,7 @@ def test_migration_adds_resolved_at_column():
 
     spec = importlib.util.spec_from_file_location(
         "migration_0002",
-        "/home/z/my-project/qvis/alembic/versions/0002_add_resolved_at_to_correlations.py",
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "alembic", "versions", "0002_add_resolved_at_to_correlations.py"),
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

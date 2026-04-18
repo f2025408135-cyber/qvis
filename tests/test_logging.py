@@ -249,7 +249,7 @@ class TestNoBarePrintOrLogging:
         import subprocess
         result = subprocess.run(
             ["rg", r"\bprint\s*\(", "backend/", "--files-with-matches"],
-            capture_output=True, text=True, cwd="/home/z/my-project/qvis"
+            capture_output=True, text=True, cwd=os.path.dirname(os.path.dirname(__file__))
         )
         # Empty output means no matches
         assert result.returncode != 0 or result.stdout.strip() == "", (
@@ -262,7 +262,7 @@ class TestNoBarePrintOrLogging:
         # Exclude logging_config.py itself which legitimately imports logging
         result = subprocess.run(
             ["rg", r"import logging", "backend/", "--files-with-matches", "-g", "!logging_config.py"],
-            capture_output=True, text=True, cwd="/home/z/my-project/qvis"
+            capture_output=True, text=True, cwd=os.path.dirname(os.path.dirname(__file__))
         )
         assert result.returncode != 0 or result.stdout.strip() == "", (
             f"import logging found in: {result.stdout.strip()}"
@@ -273,7 +273,7 @@ class TestNoBarePrintOrLogging:
         import subprocess
         result = subprocess.run(
             ["rg", r"logging\.getLogger", "backend/", "--files-with-matches", "-g", "!logging_config.py"],
-            capture_output=True, text=True, cwd="/home/z/my-project/qvis"
+            capture_output=True, text=True, cwd=os.path.dirname(os.path.dirname(__file__))
         )
         assert result.returncode != 0 or result.stdout.strip() == "", (
             f"logging.getLogger() found in: {result.stdout.strip()}"
@@ -455,7 +455,7 @@ class TestLogEventNames:
         import subprocess
         result = subprocess.run(
             ["rg", f'"{event_name}"', "backend/", "--files-with-matches"],
-            capture_output=True, text=True, cwd="/home/z/my-project/qvis"
+            capture_output=True, text=True, cwd=os.path.dirname(os.path.dirname(__file__))
         )
         assert result.returncode == 0 and result.stdout.strip() != "", (
             f"Event '{event_name}' not found in backend code"
