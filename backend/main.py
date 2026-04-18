@@ -130,6 +130,7 @@ async def simulation_loop():
     github_last_run = 0
     github_results = []
     cycle_count = 0
+    retention_last_run = 0
 
     while True:
         try:
@@ -359,6 +360,18 @@ async def simulation_loop():
                 severity_counts[sev] = severity_counts.get(sev, 0) + 1
             for sev in ("critical", "high", "medium", "low", "info"):
                 threats_active.labels(severity=sev).set(severity_counts.get(sev, 0))
+            
+            # ── Periodic data retention cleanup ────────────────────────
+            now_ts = time.time()
+            if now_ts - retention_last_run >= settings.retention_cleanup_interval_seconds:
+                try:
+                    from backend.storage.retention import run_retention_cleanup
+                    cleanup_result = await run_retention_cleanup()
+                    retention_last_run = now_ts
+                    if cleanup_result["threats_deleted"] > 0 or cleanup_result["correlations_deleted"] > 0:
+                        logger.info("retention_cleanup_triggered", **cleanup_result)
+                except Exception as ret_exc:
+                    logger.error("retention_cleanup_loop_error", error=str(ret_exc))
             
             await asyncio.sleep(settings.update_interval_seconds)
         except asyncio.CancelledError:
@@ -664,6 +677,47 @@ async def get_threat_stats_endpoint(_auth: None = Depends(verify_api_key)):
     """
     from backend.storage.database import get_threat_stats as db_get_stats
     return await db_get_stats()
+
+
+# ─── Retention Stats Endpoint ──────────────────────────────────────────
+@app.get("/api/admin/retention", tags=["admin"])
+async def get_retention_stats_endpoint(_auth: None = Depends(verify_api_key)):
+    """Returns data retention statistics and cleanup eligibility.
+
+    Response shape:
+    {
+        threats_eligible: int,
+        correlations_eligible: int,
+        total_threats: int,
+        total_correlations: int,
+        threat_cutoff: str,        (ISO-8601)
+        correlation_cutoff: str,   (ISO-8601)
+        retention_days_threats: int,
+        retention_days_correlations: int
+    }
+    """
+    from backend.storage.retention import get_retention_stats
+    return await get_retention_stats()
+
+
+# ─── Manual Retention Trigger Endpoint ─────────────────────────────────
+@app.post("/api/admin/retention/cleanup", tags=["admin"])
+async def trigger_retention_cleanup(
+    threat_days: Optional[int] = Query(default=None, ge=1, le=3650, description="Override threat retention days"),
+    correlation_days: Optional[int] = Query(default=None, ge=1, le=3650, description="Override correlation retention days"),
+    _auth: None = Depends(verify_api_key),
+):
+    """Manually trigger a retention cleanup cycle.
+
+    Optionally override retention days via query parameters.
+    Returns a summary of what was deleted.
+    """
+    from backend.storage.retention import run_retention_cleanup
+    result = await run_retention_cleanup(
+        threat_days=threat_days,
+        correlation_days=correlation_days,
+    )
+    return result
 
 # ─── Scenario Endpoints ──────────────────────────────────────────────
 active_scenario = {"name": None}

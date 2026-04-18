@@ -140,10 +140,12 @@ CREATE TABLE IF NOT EXISTS correlation_events (
     techniques      TEXT    NOT NULL DEFAULT '[]',  -- JSON array
     backends        TEXT    NOT NULL DEFAULT '[]',  -- JSON array
     detected_at     TEXT    NOT NULL,               -- ISO-8601
-    severity        TEXT    NOT NULL
+    severity        TEXT    NOT NULL,
+    resolved_at     TEXT                             -- ISO-8601, NULL while active
 );
 
 CREATE INDEX IF NOT EXISTS idx_corr_detected_at ON correlation_events(detected_at);
+CREATE INDEX IF NOT EXISTS idx_corr_resolved_at ON correlation_events(resolved_at);
 """
 
 
@@ -414,4 +416,5 @@ def _row_to_corr_dict(row: aiosqlite.Row) -> Dict[str, Any]:
         "backends": json.loads(row["backends"]) if row["backends"] else [],
         "detected_at": row["detected_at"],
         "severity": row["severity"],
+        "resolved_at": row["resolved_at"],
     }

@@ -58,6 +58,7 @@ class CorrelationEventModel(Base):
     backends = sa.Column(sa.Text, nullable=False, server_default="[]")
     detected_at = sa.Column(sa.Text, nullable=False)
     severity = sa.Column(sa.Text, nullable=False)
+    resolved_at = sa.Column(sa.Text, nullable=True)
 
 
 # ── Convenience: list all models for autogenerate discovery ─────────────

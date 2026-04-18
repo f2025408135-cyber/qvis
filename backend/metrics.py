@@ -113,3 +113,33 @@ rate_limit_exceeded_total = Counter(
     "Total rate limit exceeded events",
     labelnames=["endpoint"],
 )
+
+# ─── Data Retention Metrics ─────────────────────────────────────────────────
+
+retention_cleanup_duration_seconds = Histogram(
+    "qvis_retention_cleanup_duration_seconds",
+    "Time spent on each retention cleanup cycle",
+    buckets=[0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0],
+)
+
+retention_rows_deleted_total = Counter(
+    "qvis_retention_rows_deleted_total",
+    "Total rows deleted by retention cleanup",
+    labelnames=["table"],
+)
+
+retention_cleanup_errors_total = Counter(
+    "qvis_retention_cleanup_errors_total",
+    "Total retention cleanup errors",
+)
+
+retention_vacuum_duration_seconds = Histogram(
+    "qvis_retention_vacuum_duration_seconds",
+    "Time spent on SQLite VACUUM during retention cleanup",
+    buckets=[0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0],
+)
+
+retention_last_cleanup_timestamp = Gauge(
+    "qvis_retention_last_cleanup_timestamp",
+    "Unix timestamp of the last successful retention cleanup",
+)

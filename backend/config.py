@@ -32,6 +32,30 @@ class Settings(BaseSettings):
         description="SQLAlchemy database URL. Supports SQLite and PostgreSQL.",
     )
 
+    # Data Retention — controls automatic cleanup of old records.
+    retention_days_threats: int = Field(
+        default=90,
+        ge=1,
+        le=3650,
+        description="Days to retain resolved threat events before purging.",
+    )
+    retention_days_correlations: int = Field(
+        default=90,
+        ge=1,
+        le=3650,
+        description="Days to retain correlation events before purging.",
+    )
+    retention_cleanup_interval_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=86400,
+        description="Seconds between automatic retention cleanup cycles.",
+    )
+    retention_vacuum_enabled: bool = Field(
+        default=True,
+        description="Whether to run VACUUM after cleanup (SQLite only).",
+    )
+
     # GitHub scanner
     github_token: SecretStr = SecretStr("")
 
@@ -42,8 +66,12 @@ class Settings(BaseSettings):
 
     def __repr__(self) -> str:
         """Redacted repr — never exposes secret values."""
-        return "Settings(demo_mode={!r}, auth_enabled={!r}, log_level={!r})".format(
-            self.demo_mode, self.auth_enabled, self.log_level
+        return (
+            "Settings(demo_mode={!r}, auth_enabled={!r}, log_level={!r}, "
+            "retention_days_threats={!r}, retention_days_correlations={!r})"
+        ).format(
+            self.demo_mode, self.auth_enabled, self.log_level,
+            self.retention_days_threats, self.retention_days_correlations,
         )
 
 
