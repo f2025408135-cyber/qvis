@@ -1,32 +1,58 @@
-```gitignore
-# Python compiled files
+# ── Python ──────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
+dist/
+build/
+*.egg
 
-# Database files
-*.db-shm
-*.db-wal
-
-# Dependencies
+# ── Virtual environments ───────────────────────────────────────────────
 venv/
 .venv/
+env/
+
+# ── Environment / secrets ──────────────────────────────────────────────
 .env
 .env.local
+.env.*.local
 
-# Logs
+# ── Database ───────────────────────────────────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+data/qvis.db
+
+# ── Logs ───────────────────────────────────────────────────────────────
 *.log
+logs/
 
-# Editors
-.vscode/
-.idea/
-
-# Coverage reports
+# ── Coverage ───────────────────────────────────────────────────────────
 coverage/
 htmlcov/
 .coverage
+.coverage.*
+coverage.xml
+test-results.xml
 
-# Pytest cache
+# ── Pytest ─────────────────────────────────────────────────────────────
 .pytest_cache/
-```
+
+# ── Editors / IDEs ─────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS files ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Calibration output ─────────────────────────────────────────────────
+calibration_results.json
+
+# ── Playwright ─────────────────────────────────────────────────────────
+playwright-report/
+test-results/

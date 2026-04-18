@@ -1,0 +1,28 @@
+# QVis Code Owners
+# These individuals or teams will be auto-requested for review on PRs
+# affecting the corresponding paths.
+
+# Default — all files
+* @f2025408135-cyber
+
+# Backend core
+/backend/ @f2025408135-cyber
+/backend/threat_engine/ @f2025408135-cyber
+/backend/storage/ @f2025408135-cyber
+/backend/collectors/ @f2025408135-cyber
+
+# Frontend
+/frontend/ @f2025408135-cyber
+
+# CI / DevOps
+/.github/ @f2025408135-cyber
+/Dockerfile @f2025408135-cyber
+/docker-compose.yml @f2025408135-cyber
+
+# Database migrations
+/alembic/ @f2025408135-cyber
+
+# Security
+/backend/api/auth.py @f2025408135-cyber
+/backend/api/ratelimit.py @f2025408135-cyber
+/backend/api/security_headers.py @f2025408135-cyber
