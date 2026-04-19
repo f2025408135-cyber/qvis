@@ -81,6 +81,9 @@ class ConnectionManager:
         for connection in self.active_connections:
             try:
                 await connection.send_text(message)
+                from backend.main import _health_state
+                from datetime import datetime, timezone
+                _health_state['last_broadcast_at'] = datetime.now(timezone.utc)
                 websocket_messages_sent_total.inc()
             except Exception as e:
                 logger.error("websocket_broadcast_error", error=str(e))

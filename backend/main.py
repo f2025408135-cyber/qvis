@@ -50,6 +50,42 @@ from backend.threat_engine.models import SimulationSnapshot, BackendNode, Threat
 from backend.threat_engine.rules import load_threshold_config_from_file, set_threshold_config, get_threshold_config
 from backend.storage.database import init_db, close_db
 
+
+from enum import Enum
+from pydantic import BaseModel
+
+class HealthStatus(str, Enum):
+    healthy = "healthy"
+    degraded = "degraded"
+    unhealthy = "unhealthy"
+
+class ComponentHealth(BaseModel):
+    """Health status of one system component."""
+    status: HealthStatus
+    message: str
+    last_success_at: Optional[datetime] = None
+    latency_ms: Optional[float] = None
+
+class HealthResponse(BaseModel):
+    """Full system health response."""
+    status: HealthStatus
+    version: str
+    uptime_seconds: float
+    components: dict[str, ComponentHealth]
+    checked_at: datetime
+    # Backward compatibility
+    demo_mode: bool
+    active_collector: str
+    connected_platforms: list[str]
+
+_health_state = {
+    "last_collection_at": None,       # datetime | None
+    "last_collection_error": None,    # str | None
+    "last_broadcast_at": None,        # datetime | None
+    "last_engine_cycle_at": None,     # datetime | None
+    "startup_time": time.time(),
+}
+
 # ─── Application State ─────────────────────────────────────────────────
 latest_snapshot: Optional[SimulationSnapshot] = None
 _snapshot_lock = asyncio.Lock()
@@ -148,6 +184,8 @@ async def simulation_loop():
                     collector_type=collector.__class__.__name__
                 ).set(len(snapshot.backends))
 
+                _health_state["last_collection_at"] = datetime.now(timezone.utc)
+                _health_state["last_collection_error"] = None
                 logger.info("collection_complete",
                     collector=collector.__class__.__name__,
                     backends_count=len(snapshot.backends),
@@ -348,6 +386,7 @@ async def simulation_loop():
             await manager.broadcast_snapshot(enriched_snapshot)
             
             elapsed_ms = round((time.monotonic() - start) * 1000)
+            _health_state["last_engine_cycle_at"] = datetime.now(timezone.utc)
             logger.info("simulation_loop_complete",
                 cycle=cycle_count,
                 threats_active=len(analyzer.active_threats),
@@ -483,114 +522,150 @@ app.add_middleware(RateLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
 # ─── Health Endpoints (not behind auth) ────────────────────────────────
-@app.get("/api/health")
+
+@app.get("/health", response_model=HealthResponse)
 async def health_check():
-    """Comprehensive health check with component-level status.
-
-    Returns overall status, version, uptime, database connectivity,
-    collector health, and platform information. Backward-compatible
-    with existing fields (status, demo_mode, active_collector, connected_platforms).
     """
-    uptime_seconds = round(time.monotonic() - _APP_START_TIME, 1)
+    System readiness check.
 
-    # Database connectivity check
-    db_status = "ok"
+    Returns 200 if all components are healthy.
+    Returns 200 with status=degraded if non-critical components fail.
+    Returns 503 if critical components (database, engine) are unhealthy.
+    """
+    components = {}
+    now = datetime.now(timezone.utc)
+    overall = HealthStatus.healthy
+
+    # ── Database Check ────────────────────────────────────────────────
+    db_start = time.monotonic()
     try:
         from backend.storage.database import _get_connection
-        conn = await _get_connection()
-        cursor = await conn.execute("SELECT 1")
-        await cursor.fetchone()
-    except Exception as exc:
-        db_status = f"error: {str(exc)[:100]}"
+        db = await _get_connection()
+        await db.execute("SELECT 1")
+        db_latency = (time.monotonic() - db_start) * 1000
+        components["database"] = ComponentHealth(
+            status=HealthStatus.healthy,
+            message="SQLite reachable and writable",
+            latency_ms=round(db_latency, 2),
+        )
+    except Exception as e:
+        components["database"] = ComponentHealth(
+            status=HealthStatus.unhealthy,
+            message=f"Database unreachable: {e}",
+        )
+        overall = HealthStatus.unhealthy
 
-    # Memory usage
-    try:
-        mem_info = resource.getrusage(resource.RUSAGE_SELF)
-        rss_mb = round(mem_info.ru_maxrss / 1024, 1)  # macOS: bytes, Linux: KB
-    except Exception:
-        rss_mb = None
+    # ── Collector Check ───────────────────────────────────────────────
+    last_collection = _health_state["last_collection_at"]
+    collection_error = _health_state["last_collection_error"]
+    max_stale = settings.update_interval_seconds * 2
 
-    # Collector info
-    collector_name = type(collector).__name__
-    is_demo = settings.demo_mode or collector_name == "AggregatorCollector"
-    platforms = []
-    if is_demo:
-        if collector_name == "AggregatorCollector":
-            platforms = ["ibm_quantum", "amazon_braket", "azure_quantum"]
+    if last_collection is None:
+        components["collector"] = ComponentHealth(
+            status=HealthStatus.degraded,
+            message="No collection has completed yet (startup)",
+        )
+        if overall == HealthStatus.healthy:
+            overall = HealthStatus.degraded
+    elif collection_error:
+        components["collector"] = ComponentHealth(
+            status=HealthStatus.degraded,
+            message=f"Last collection failed: {collection_error}",
+            last_success_at=last_collection,
+        )
+        if overall == HealthStatus.healthy:
+            overall = HealthStatus.degraded
+    else:
+        age_seconds = (now - last_collection).total_seconds()
+        if age_seconds > max_stale:
+            components["collector"] = ComponentHealth(
+                status=HealthStatus.unhealthy,
+                message=f"Collection stale: {age_seconds:.0f}s ago"
+                        f" (max {max_stale}s)",
+                last_success_at=last_collection,
+            )
+            overall = HealthStatus.unhealthy
         else:
-            platforms = ["mock"]
-    elif settings.ibm_quantum_token.get_secret_value():
-        platforms.append("ibm_quantum")
-    if settings.aws_access_key_id.get_secret_value():
-        platforms.append("amazon_braket")
-    if settings.azure_quantum_subscription_id.get_secret_value():
-        platforms.append("azure_quantum")
+            components["collector"] = ComponentHealth(
+                status=HealthStatus.healthy,
+                message=f"Last collection {age_seconds:.0f}s ago",
+                last_success_at=last_collection,
+            )
 
-    # Overall status is degraded if database is down
-    overall = "degraded" if db_status != "ok" else "ok"
+    # ── Threat Engine Check ───────────────────────────────────────────
+    last_cycle = _health_state["last_engine_cycle_at"]
+    if last_cycle is None:
+        components["threat_engine"] = ComponentHealth(
+            status=HealthStatus.degraded,
+            message="No analysis cycle completed yet",
+        )
+        if overall == HealthStatus.healthy:
+            overall = HealthStatus.degraded
+    else:
+        components["threat_engine"] = ComponentHealth(
+            status=HealthStatus.healthy,
+            message="Analysis engine running",
+            last_success_at=last_cycle,
+        )
 
-    return {
-        "status": overall,
-        "version": _APP_VERSION,
-        "uptime_seconds": uptime_seconds,
-        "started_at": _APP_START_TIME_ISO,
-        "demo_mode": is_demo,
-        "active_collector": collector_name,
-        "connected_platforms": platforms,
-        "components": {
-            "database": db_status,
-            "collector": "ok",
-            "api": "ok",
-        },
-        "memory_rss_mb": rss_mb,
-        "active_threats": len(analyzer.active_threats),
-    }
+    # ── WebSocket Check ───────────────────────────────────────────────
+    last_broadcast = _health_state["last_broadcast_at"]
+    ws_connections = len(manager.active_connections)
+    if last_broadcast is None:
+        components["websocket"] = ComponentHealth(
+            status=HealthStatus.degraded,
+            message="No broadcast sent yet",
+        )
+    else:
+        components["websocket"] = ComponentHealth(
+            status=HealthStatus.healthy,
+            message=f"Broadcasting — {ws_connections} active connections",
+            last_success_at=last_broadcast,
+        )
 
-
-@app.get("/api/health/live")
-async def liveness_check():
-    """Kubernetes liveness probe — returns 200 if the process is alive.
-
-    This endpoint never performs I/O and should always respond quickly.
-    """
-    return {"status": "alive"}
-
-
-@app.get("/api/health/ready")
-async def readiness_check():
-    """Kubernetes readiness probe — returns 200 only if all dependencies are ready.
-
-    Checks database connectivity and collector availability.
-    Returns 503 with details if any component is unhealthy.
-    """
-    checks = {}
-
-    # Database check
-    try:
-        from backend.storage.database import _get_connection
-        conn = await _get_connection()
-        cursor = await conn.execute("SELECT 1")
-        await cursor.fetchone()
-        checks["database"] = "ok"
-    except Exception as exc:
-        checks["database"] = f"error: {str(exc)[:100]}"
-
-    # Collector check — verify it has been used at least once
-    # (the collector object always exists, so we just verify it's the right type)
-    checks["collector"] = "ok" if collector is not None else "missing"
-
-    all_ok = all(v == "ok" for v in checks.values())
-    status_code = 200 if all_ok else 503
-
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "status": "ready" if all_ok else "not_ready",
-            "checks": checks,
-        },
+    status_code = 503 if overall == HealthStatus.unhealthy else 200
+    response_body = HealthResponse(
+        status=overall,
+        version=_APP_VERSION,
+        uptime_seconds=round(time.time() - _health_state["startup_time"], 1),
+        components=components,
+        checked_at=now,
+        demo_mode=settings.demo_mode,
+        active_collector=collector.__class__.__name__,
+        connected_platforms=[str(p) for p in getattr(collector, "platforms", ["mock"])]
     )
 
-# ─── Snapshot / Threat Endpoints (auth-optional) ──────────────────────
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        content=response_body.model_dump(mode="json"),
+        status_code=status_code,
+    )
+
+@app.get("/ready")
+async def readiness_probe():
+    """
+    Kubernetes readiness probe.
+    Returns 200 only when system is ready to receive traffic.
+    Returns 503 during startup or when critical components fail.
+    """
+    health = await health_check()
+    if health.status_code == 503:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"ready": False}, status_code=503)
+    from fastapi.responses import JSONResponse
+    return JSONResponse({"ready": True}, status_code=200)
+
+@app.get("/live")
+async def liveness_probe():
+    """
+    Kubernetes liveness probe.
+    Returns 200 as long as the process is running.
+    """
+    from fastapi.responses import JSONResponse
+    return JSONResponse({"alive": True}, status_code=200)
+
+
+
 async def _ensure_snapshot():
     """Return the latest snapshot, initialising if necessary.
 

@@ -181,7 +181,7 @@ class TestFallbackManagerConcepts:
 
         # Force reload with mock collector
         client = TestClient(app)
-        response = client.get("/api/health")
+        response = client.get("/health")
         data = response.json()
 
         assert "status" in data

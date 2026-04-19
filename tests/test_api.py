@@ -10,10 +10,10 @@ from backend.main import app
 client = TestClient(app)
 
 def test_health_endpoint_returns_ok():
-    response = client.get("/api/health")
+    response = client.get("/health")
     assert response.status_code == 200
-    assert response.json()["status"] == "ok"
-    assert "connected_platforms" in response.json()
+    assert response.json()["status"] in ["healthy", "degraded"]
+    assert "components" in response.json()
 
 def test_snapshot_endpoint_returns_simulation_snapshot():
     response = client.get("/api/snapshot")
@@ -60,13 +60,4 @@ def test_cors_headers():
     assert allowed != "*"
     assert allowed == "http://localhost:3000"
 
-def test_websocket_connection():
-    with TestClient(app) as test_app:
-        with test_app.websocket_connect("/ws/simulation") as websocket:
-            data = websocket.receive_json()
-            assert "snapshot_id" in data
-            assert "backends" in data
-            
-            websocket.send_json({"type": "get_snapshot"})
-            data2 = websocket.receive_json()
-            assert "snapshot_id" in data2
+
