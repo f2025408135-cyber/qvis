@@ -182,6 +182,8 @@ QVis is an open research platform — contributions are welcome.
 Run tests with `pytest tests/ --cov=backend/threat_engine --cov-report=term`.
 
 ## Research Applications
+See [Academic Foundation & Q-ATT&CK Framework Research](docs/research.md) for the theoretical grounding of this framework.
+
 
 - **Quantum threat modeling validation** — Use QVis's Q-ATT&CK taxonomy and live detection rules to empirically validate threat models from USENIX Sec 2023 and ACSAC 2022 papers against real quantum cloud telemetry.
 - **Security education and training** — The built-in scenario replay system with pre-loaded attack simulations provides a hands-on teaching environment for quantum security courses and CTF competitions.
