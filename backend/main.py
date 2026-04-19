@@ -30,6 +30,7 @@ from backend.metrics import (
     campaign_correlations_total,
 )
 
+from backend.tasks.retention import retention_loop
 from backend.config import settings
 from backend.logging_config import configure_logging
 
@@ -447,6 +448,15 @@ async def lifespan(app: FastAPI):
 
     logger.info("starting_simulation_loop")
     task = asyncio.create_task(simulation_loop())
+    logger.info("starting_retention_loop")
+    retention_task = asyncio.create_task(
+        retention_loop(
+            db=db,
+            retention_days=settings.threat_retention_days,
+            check_interval_hours=settings.retention_check_interval_hours,
+        ),
+        name="retention_loop",
+    )
 
     try:
         initial = analyzer.analyze(await collector.collect())
@@ -464,6 +474,7 @@ async def lifespan(app: FastAPI):
     yield
 
     task.cancel()
+    retention_task.cancel()
     await db.close()
     logger.info("shutting_down_simulation_loop")
 
@@ -751,90 +762,20 @@ async def get_threat_stats_endpoint(_auth: None = Depends(verify_api_key)):
     stats = await db.get_threat_stats()
     return stats
 
-@app.get("/api/admin/retention"
-, tags=["admin"])
-async def get_retention_stats_endpoint(_auth: None = Depends(verify_api_key)):
-    """Returns data retention statistics and cleanup eligibility.
 
-    Response shape:
-    {
-        threats_eligible: int,
-        correlations_eligible: int,
-        total_threats: int,
-        total_correlations: int,
-        threat_cutoff: str,        (ISO-8601)
-        correlation_cutoff: str,   (ISO-8601)
-        retention_days_threats: int,
-        retention_days_correlations: int
-    }
+@app.post("/api/admin/retention/run", tags=["admin"])
+async def run_retention_now(_auth: None = Depends(verify_api_key)):
     """
-    from backend.storage.retention import get_retention_stats
-    return await get_retention_stats()
-
-
-# ─── Manual Retention Trigger Endpoint ─────────────────────────────────
-@app.post("/api/admin/retention/cleanup", tags=["admin"])
-async def trigger_retention_cleanup(
-    threat_days: Optional[int] = Query(default=None, ge=1, le=3650, description="Override threat retention days"),
-    correlation_days: Optional[int] = Query(default=None, ge=1, le=3650, description="Override correlation retention days"),
-    _auth: None = Depends(verify_api_key),
-):
-    """Manually trigger a retention cleanup cycle.
-
-    Optionally override retention days via query parameters.
-    Returns a summary of what was deleted.
+    Manually trigger a retention cleanup cycle.
+    Requires authentication. Returns count of deleted records.
     """
-    from backend.storage.retention import run_retention_cleanup
-    result = await run_retention_cleanup(
-        threat_days=threat_days,
-        correlation_days=correlation_days,
+    deleted = await db.delete_threats_older_than(
+        settings.threat_retention_days
     )
-    return result
+    return {"deleted": deleted, "retention_days": settings.threat_retention_days}
 
-# ─── Scenario Endpoints ──────────────────────────────────────────────
-active_scenario = {"name": None}
 
-@app.post("/api/scenario/load")
-async def load_scenario(name: str, _auth: None = Depends(verify_api_key)):
-    """Load a pre-recorded attack scenario for playback."""
-    import re
-    if not re.match(r'^[a-zA-Z0-9_\-]+$', name):
-        raise HTTPException(status_code=400, detail="Invalid scenario name")
-    if len(name) > 100:
-        raise HTTPException(status_code=400, detail="Scenario name too long")
-    global collector, active_scenario
-    from backend.collectors.scenario import ScenarioCollector
-    scenario = ScenarioCollector()
-    if scenario.load_scenario(name):
-        collector = scenario
-        active_scenario["name"] = name
-        analyzer.reset()
-        correlator.reset()
-        logger.info("scenario_loaded", scenario=name)
-        return {"status": "loaded", "scenario": name}
-    raise HTTPException(status_code=400, detail=f"Unknown scenario: {name}")
 
-@app.get("/api/scenario/list")
-async def list_scenarios():
-    """List all available scenario names."""
-    from backend.collectors.scenario import SCENARIOS
-    return {"scenarios": list(SCENARIOS.keys())}
-
-@app.post("/api/scenario/reset")
-async def reset_scenario(_auth: None = Depends(verify_api_key)):
-    """Reset to the default mock collector after a scenario playback."""
-    global collector, active_scenario
-    if active_scenario["name"] is None:
-        return {"status": "already_default", "message": "No scenario is active"}
-
-    from backend.collectors.mock import MockCollector
-    collector = MockCollector()
-    active_scenario["name"] = None
-    analyzer.reset()
-    correlator.reset()
-    baseline_manager.reset()
-    logger.info("scenario_reset_to_mock")
-    return {"status": "reset", "message": "Collector reset to mock mode"}
 
 # ─── WebSocket Endpoint (with optional auth) ──────────────────────────
 @app.websocket("/ws/simulation")
@@ -911,6 +852,52 @@ async def websocket_endpoint(websocket: WebSocket):
 _RESERVED_PATHS = {"docs", "redoc", "openapi.json"}
 # Import urllib for URL-encoded path traversal detection
 from urllib.parse import unquote
+
+
+# ─── Scenario Endpoints ──────────────────────────────────────────────
+active_scenario = {"name": None}
+
+@app.post("/api/scenario/load")
+async def load_scenario(name: str, _auth: None = Depends(verify_api_key)):
+    """Load a pre-recorded attack scenario for playback."""
+    import re
+    if not re.match(r'^[a-zA-Z0-9_\-]+$', name):
+        raise HTTPException(status_code=400, detail="Invalid scenario name")
+    if len(name) > 100:
+        raise HTTPException(status_code=400, detail="Scenario name too long")
+    global collector, active_scenario
+    from backend.collectors.scenario import ScenarioCollector
+    scenario = ScenarioCollector()
+    if scenario.load_scenario(name):
+        collector = scenario
+        active_scenario["name"] = name
+        analyzer.reset()
+        correlator.reset()
+        logger.info("scenario_loaded", scenario=name)
+        return {"status": "loaded", "scenario": name}
+    raise HTTPException(status_code=400, detail=f"Unknown scenario: {name}")
+
+@app.get("/api/scenario/list")
+async def list_scenarios():
+    """List all available scenario names."""
+    from backend.collectors.scenario import SCENARIOS
+    return {"scenarios": list(SCENARIOS.keys())}
+
+@app.post("/api/scenario/reset")
+async def reset_scenario(_auth: None = Depends(verify_api_key)):
+    """Reset to the default mock collector after a scenario playback."""
+    global collector, active_scenario
+    if active_scenario.get("name") is None:
+        return {"status": "already_default", "message": "No scenario is active"}
+
+    from backend.collectors.mock import MockCollector
+    collector = MockCollector()
+    active_scenario["name"] = None
+    analyzer.reset()
+    correlator.reset()
+    baseline_manager.reset()
+    logger.info("scenario_reset_to_mock")
+    return {"status": "reset", "message": "Collector reset to mock mode"}
 
 @app.get("/{full_path:path}")
 async def serve_frontend(full_path: str):

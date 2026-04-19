@@ -1,495 +1,141 @@
-"""Tests for the data retention policy engine (CHUNK 05).
-
-Covers:
-- purge_expired_threats: only resolved threats older than cutoff are deleted
-- purge_expired_correlations: all correlations older than cutoff are deleted
-- vacuum_database: SQLite VACUUM runs when enabled, skipped for PostgreSQL
-- run_retention_cleanup: full cycle orchestration
-- get_retention_stats: eligibility counting without deletion
-- Integration with the simulation loop timer
-- Prometheus metrics recording
-- Admin API endpoints
-- Alembic migration for resolved_at on correlation_events
-"""
-
-from __future__ import annotations
-
-import asyncio
-import os
-import time
-from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock, AsyncMock
+import pytest_asyncio
+"""Tests for the data retention policy engine."""
 
 import pytest
-import pytest_asyncio
-
-# Ensure we use the test database
-os.environ.setdefault("USE_MOCK", "true")
-
-
-# ─── Fixtures ─────────────────────────────────────────────────────────────
-
-@pytest.fixture(autouse=True)
-def _reset_settings(monkeypatch):
-    """Ensure retention settings are at known defaults for each test."""
-    monkeypatch.setenv("RETENTION_DAYS_THREATS", "30")
-    monkeypatch.setenv("RETENTION_DAYS_CORRELATIONS", "30")
-    monkeypatch.setenv("RETENTION_CLEANUP_INTERVAL_SECONDS", "3600")
-    monkeypatch.setenv("RETENTION_VACUUM_ENABLED", "false")
-
-
-@pytest.fixture
-def retention_settings():
-    """Return current Settings with retention fields."""
-    from backend.config import settings
-    return settings
-
+import asyncio
+from datetime import datetime, timezone, timedelta
+from backend.storage import create_database
+from backend.threat_engine.models import ThreatEvent, Severity, Platform
+from backend.config import Settings
+from backend.tasks.retention import retention_loop
 
 @pytest_asyncio.fixture
-async def db_with_data():
-    """Create a test database with threat and correlation data of various ages."""
-    from backend.storage import database as db_mod
-    import json
+async def db():
+    settings = Settings()
+    settings.database_url = "sqlite:///:memory:"
+    database = create_database(settings)
+    await database.initialize()
+    yield database
+    await database.close()
 
-    # Use a unique test DB path
-    test_path = "/tmp/test_retention_qvis.db"
-    # Reset module state
-    db_mod._connection = None
-    db_mod._db_path = test_path
-
-    await db_mod.init_db(test_path)
-
+@pytest.mark.asyncio
+async def test_retention_deletes_old_resolved_threats(db):
     now = datetime.now(timezone.utc)
-    old = (now - timedelta(days=60)).isoformat()
-    recent = (now - timedelta(days=5)).isoformat()
-    very_old = (now - timedelta(days=120)).isoformat()
-
-    conn = await db_mod._get_connection()
-
-    # Insert threat events of different ages
-    test_threats = [
-        # Active threat (resolved_at=NULL) — should NEVER be purged
-        ("t1", "QTT002", "medium", "ibm", "b1", "Active Threat", "desc",
-         "{}", recent, "", 0.5, "[]", None),
-        # Resolved, old enough to purge (60 days, cutoff is 30)
-        ("t2", "QTT003", "high", "ibm", "b1", "Old Resolved", "desc",
-         "{}", very_old, "", 0.3, "[]", old),
-        # Resolved, NOT old enough to keep (5 days)
-        ("t3", "QTT009", "high", "braket", "b2", "Recent Resolved", "desc",
-         "{}", recent, "", 0.7, "[]", recent),
-        # Resolved, very old enough
-        ("t4", "QTT017", "critical", "ibm", "b1", "Very Old", "desc",
-         "{}", very_old, "", 0.9, "[]", very_old),
-        # Active threat with old detected_at but no resolved_at
-        ("t5", "QTT011", "critical", "azure", "b3", "Active Old Detected", "desc",
-         "{}", very_old, "", 0.8, "[]", None),
-    ]
-
-    for t in test_threats:
-        await conn.execute(
-            """INSERT OR REPLACE INTO threat_events
-               (id, technique_id, severity, platform, backend_id, title,
-                description, evidence, detected_at, visual_effect,
-                visual_intensity, remediation, resolved_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            t,
+    for i in range(5):
+        threat = ThreatEvent(
+            id=f"old_resolved_{i}",
+            technique_id="T0001",
+            technique_name="Test Technique",
+            severity=Severity.low,
+            platform=Platform.ibm_quantum,
+            backend_id="ibm_test",
+            title="Test Title",
+            description="Test Desc",
+            evidence={},
+            detected_at=now,
+            visual_effect="none",
+            visual_intensity=0.0,
+            remediation=[],
         )
+        await db.save_threat(threat)
+        await db.resolve_threat(f"old_resolved_{i}")
+        await db._connection.execute(f"UPDATE threats SET resolved_at = datetime('now', '-31 days') WHERE id = 'old_resolved_{i}'")
+    await db._connection.commit()
+    
+    deleted = await db.delete_threats_older_than(30)
+    assert deleted == 5
+    
+    remaining = await db.get_recent_threats()
+    assert len(remaining) == 0
 
-    # Insert correlation events of different ages
-    test_correlations = [
-        ("c1", "Coordinated Recon", '["QTT009","QTT012"]', '["b1","b2"]',
-         very_old, "high", None),
-        ("c2", "Multi-Platform Attack", '["QTT002","QTT003"]', '["b1","b2","b3"]',
-         recent, "critical", None),
-        ("c3", "Calibration Harvest", '["QTT002"]', '["b1"]',
-         very_old, "medium", None),
-    ]
-
-    for c in test_correlations:
-        await conn.execute(
-            """INSERT OR REPLACE INTO correlation_events
-               (id, pattern_name, techniques, backends, detected_at, severity, resolved_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            c,
+@pytest.mark.asyncio
+async def test_retention_keeps_recent_resolved_threats(db):
+    now = datetime.now(timezone.utc)
+    for i in range(3):
+        threat = ThreatEvent(
+            id=f"recent_resolved_{i}",
+            technique_id="T0001",
+            technique_name="Test Technique",
+            severity=Severity.low,
+            platform=Platform.ibm_quantum,
+            backend_id="ibm_test",
+            title="Test Title",
+            description="Test Desc",
+            evidence={},
+            detected_at=now,
+            visual_effect="none",
+            visual_intensity=0.0,
+            remediation=[],
         )
-
-    await conn.commit()
-
-    yield db_mod
-
-    # Cleanup
-    try:
-        await conn.close()
-    except Exception:
-        pass
-    db_mod._connection = None
-    if os.path.exists(test_path):
-        os.unlink(test_path)
-
-
-# ─── purge_expired_threats ───────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_purge_only_resolved_old_threats(db_with_data):
-    """Only resolved threats older than the cutoff should be deleted."""
-    from backend.storage.retention import purge_expired_threats
-    from backend.storage import database as db_mod
-
-    deleted = await purge_expired_threats(days=30)
-
-    # t2 (resolved 60 days ago) and t4 (resolved 120 days ago) should be purged
-    assert deleted == 2
-
-    # Active threats (t1, t5) and recently resolved (t3) must remain
-    conn = await db_mod._get_connection()
-    cursor = await conn.execute("SELECT id FROM threat_events ORDER BY id")
-    remaining = [row["id"] for row in await cursor.fetchall()]
-    assert "t1" in remaining   # Active, never purged
-    assert "t3" in remaining   # Resolved but too recent
-    assert "t5" in remaining   # Active (no resolved_at), never purged
-    assert "t2" not in remaining  # Old resolved, purged
-    assert "t4" not in remaining  # Very old resolved, purged
-
-
-@pytest.mark.asyncio
-async def test_purge_threats_with_custom_days(db_with_data):
-    """Custom days override should adjust the cutoff."""
-    from backend.storage.retention import purge_expired_threats
-    from backend.storage import database as db_mod
-
-    # With 200 day retention, nothing should be purged (oldest is ~120 days)
-    deleted = await purge_expired_threats(days=200)
+        await db.save_threat(threat)
+        await db.resolve_threat(f"recent_resolved_{i}")
+        await db._connection.execute(f"UPDATE threats SET resolved_at = datetime('now', '-10 days') WHERE id = 'recent_resolved_{i}'")
+    await db._connection.commit()
+    
+    deleted = await db.delete_threats_older_than(30)
     assert deleted == 0
-
-    # With 1 day retention, ALL resolved threats should be purged (t2, t3, t4)
-    deleted = await purge_expired_threats(days=1)
-    assert deleted == 3  # t2, t3, t4 all resolved; t3 resolved_at=5 days ago > 1 day
-
-    # Active threats remain
-    conn = await db_mod._get_connection()
-    cursor = await conn.execute("SELECT id FROM threat_events ORDER BY id")
-    remaining = [row["id"] for row in await cursor.fetchall()]
-    assert "t1" in remaining
-    assert "t5" in remaining
-
+    
+    remaining = await db.get_recent_threats()
+    assert len(remaining) == 3
 
 @pytest.mark.asyncio
-async def test_purge_threats_active_never_purged(db_with_data):
-    """Active threats (resolved_at=NULL) must never be purged, regardless of detected_at."""
-    from backend.storage.retention import purge_expired_threats
-    from backend.storage import database as db_mod
-
-    # t5 has detected_at = 120 days ago but resolved_at = NULL (active)
-    deleted = await purge_expired_threats(days=1)
-    # Only resolved threats deleted (t2, t3, t4) — t5 is active so must remain
-    assert deleted == 3
-
-    conn = await db_mod._get_connection()
-    cursor = await conn.execute("SELECT id FROM threat_events WHERE id = 't5'")
-    row = await cursor.fetchone()
-    assert row is not None, "Active threat t5 should never be purged"
-
-    # Also verify t1 (also active) remains
-    cursor = await conn.execute("SELECT id FROM threat_events WHERE id = 't1'")
-    row = await cursor.fetchone()
-    assert row is not None, "Active threat t1 should never be purged"
-
-
-# ─── purge_expired_correlations ─────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_purge_old_correlations(db_with_data):
-    """Correlations older than cutoff should be deleted (based on detected_at)."""
-    from backend.storage.retention import purge_expired_correlations
-    from backend.storage import database as db_mod
-
-    deleted = await purge_expired_correlations(days=30)
-
-    # c1 and c3 are very old (120 days), c2 is recent (5 days)
-    assert deleted == 2
-
-    conn = await db_mod._get_connection()
-    cursor = await conn.execute("SELECT id FROM correlation_events ORDER BY id")
-    remaining = [row["id"] for row in await cursor.fetchall()]
-    assert "c1" not in remaining
-    assert "c3" not in remaining
-    assert "c2" in remaining
-
-
-@pytest.mark.asyncio
-async def test_purge_correlations_custom_days(db_with_data):
-    """Custom days override adjusts the correlation cutoff."""
-    from backend.storage.retention import purge_expired_correlations
-
-    deleted = await purge_expired_correlations(days=200)
-    assert deleted == 0
-
-    deleted = await purge_expired_correlations(days=1)
-    assert deleted == 3  # All 3 correlations are older than 1 day
-
-
-# ─── vacuum_database ────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_vacuum_skipped_when_disabled(db_with_data):
-    """VACUUM should be skipped when retention_vacuum_enabled is False."""
-    from backend.storage.retention import vacuum_database
-
-    with patch("backend.storage.retention.settings") as mock_settings:
-        mock_settings.retention_vacuum_enabled = False
-        result = await vacuum_database()
-    assert result is False
-
-
-@pytest.mark.asyncio
-async def test_vacuum_skipped_for_postgres(db_with_data):
-    """VACUUM should be a no-op for PostgreSQL backends."""
-    from backend.storage.retention import vacuum_database
-
-    with patch("backend.storage.retention.settings") as mock_settings:
-        mock_settings.retention_vacuum_enabled = True
-        mock_settings.database_url = "postgresql+asyncpg://user:pass@host:5432/qvis"
-        result = await vacuum_database()
-    assert result is False
-
-
-@pytest.mark.asyncio
-async def test_vacuum_runs_on_sqlite(db_with_data):
-    """VACUUM should execute on SQLite when enabled."""
-    from backend.storage.retention import vacuum_database
-
-    with patch("backend.storage.retention.settings") as mock_settings:
-        mock_settings.retention_vacuum_enabled = True
-        mock_settings.database_url = "sqlite+aiosqlite:///tmp/test_retention_qvis.db"
-        result = await vacuum_database()
-    assert result is True
-
-
-# ─── run_retention_cleanup ─────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_full_cleanup_cycle(db_with_data, monkeypatch):
-    """Full cleanup should purge threats and correlations, skip vacuum if no rows deleted."""
-    monkeypatch.setenv("RETENTION_VACUUM_ENABLED", "false")
-    from importlib import reload
-    import backend.config as cfg_mod
-    for attr in list(vars(cfg_mod).keys()):
-        if attr == "settings":
-            delattr(cfg_mod, attr)
-    reload(cfg_mod)
-
-    from backend.storage.retention import run_retention_cleanup
-
-    result = await run_retention_cleanup(threat_days=30, correlation_days=30, do_vacuum=False)
-
-    assert result["threats_deleted"] == 2
-    assert result["correlations_deleted"] == 2
-    assert result["vacuumed"] is False
-    assert result["errors"] == []
-    assert result["duration_seconds"] >= 0
-
-
-@pytest.mark.asyncio
-async def test_cleanup_with_vacuum_after_deletes(db_with_data):
-    """VACUUM should run only when rows were actually deleted."""
-    from backend.storage.retention import run_retention_cleanup
-
-    with patch("backend.storage.retention.settings") as mock_settings:
-        mock_settings.retention_vacuum_enabled = True
-        mock_settings.database_url = "sqlite+aiosqlite:///tmp/test_retention_qvis.db"
-
-        result = await run_retention_cleanup(threat_days=30, correlation_days=30)
-
-        assert result["threats_deleted"] == 2
-        assert result["correlations_deleted"] == 2
-        assert result["vacuumed"] is True  # Rows deleted → VACUUM runs
-
-
-@pytest.mark.asyncio
-async def test_cleanup_noop_when_nothing_expired(db_with_data):
-    """Cleanup should not VACUUM when nothing is deleted."""
-    from backend.storage.retention import run_retention_cleanup
-
-    with patch("backend.storage.retention.settings") as mock_settings:
-        mock_settings.retention_vacuum_enabled = True
-
-        # 1000 day retention — nothing should be purged
-        result = await run_retention_cleanup(threat_days=1000, correlation_days=1000)
-
-        assert result["threats_deleted"] == 0
-        assert result["correlations_deleted"] == 0
-        assert result["vacuumed"] is False  # No deletes → skip VACUUM
-
-
-@pytest.mark.asyncio
-async def test_cleanup_error_handling(db_with_data, monkeypatch):
-    """Errors in individual steps should be captured, not raised."""
-    from backend.storage.retention import run_retention_cleanup
-
-    # Use invalid days (0) which should still work — we use ge=1 in Settings
-    # but the retention module accepts int directly
-    result = await run_retention_cleanup(threat_days=-1, correlation_days=30)
-
-    # Even with invalid cutoff, the function should not crash
-    assert "duration_seconds" in result
-
-
-# ─── get_retention_stats ────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_retention_stats(db_with_data):
-    """get_retention_stats should count eligible rows without deleting them."""
-    from backend.storage.retention import get_retention_stats
-
-    with patch("backend.storage.retention.settings") as mock_settings:
-        mock_settings.retention_days_threats = 30
-        mock_settings.retention_days_correlations = 30
-
-        stats = await get_retention_stats()
-
-    assert "threats_eligible" in stats
-    assert "correlations_eligible" in stats
-    assert "total_threats" in stats
-    assert "total_correlations" in stats
-    assert "threat_cutoff" in stats
-    assert "correlation_cutoff" in stats
-    assert stats["total_threats"] == 5
-    assert stats["total_correlations"] == 3
-
-    # With 30-day retention:
-    # t2 and t4 are resolved and old → eligible
-    # c1 and c3 are old → eligible
-    assert stats["threats_eligible"] == 2
-    assert stats["correlations_eligible"] == 2
-
-    # Verify nothing was actually deleted
-    from backend.storage import database as db_mod
-    conn = await db_mod._get_connection()
-    cursor = await conn.execute("SELECT COUNT(*) AS cnt FROM threat_events")
-    assert (await cursor.fetchone())["cnt"] == 5
-
-
-# ─── Settings Configuration ─────────────────────────────────────────────
-
-def test_retention_settings_defaults():
-    """Retention settings should have sensible defaults when no env vars are set."""
-    from pydantic_settings import SettingsConfigDict
-    from backend.config import Settings
-
-    # Create with _env_file=None to avoid reading .env and no env override
-    s = Settings(
-        _env_file=None,
-        demo_mode=True,
-        auth_enabled=False,
-        retention_days_threats=90,
-        retention_days_correlations=90,
-        retention_cleanup_interval_seconds=3600,
-        retention_vacuum_enabled=True,
+async def test_retention_keeps_unresolved_threats(db):
+    now = datetime.now(timezone.utc)
+    threat = ThreatEvent(
+        id="old_unresolved",
+        technique_id="T0001",
+        technique_name="Test Technique",
+        severity=Severity.low,
+        platform=Platform.ibm_quantum,
+        backend_id="ibm_test",
+        title="Test Title",
+        description="Test Desc",
+        evidence={},
+        detected_at=now,
+        visual_effect="none",
+        visual_intensity=0.0,
+        remediation=[],
     )
-
-    assert s.retention_days_threats == 90
-    assert s.retention_days_correlations == 90
-    assert s.retention_cleanup_interval_seconds == 3600
-    assert s.retention_vacuum_enabled is True
-
-
-def test_retention_settings_env_override(monkeypatch):
-    """Environment variables should override retention defaults."""
-    monkeypatch.setenv("RETENTION_DAYS_THREATS", "7")
-    monkeypatch.setenv("RETENTION_DAYS_CORRELATIONS", "14")
-    monkeypatch.setenv("RETENTION_CLEANUP_INTERVAL_SECONDS", "300")
-    monkeypatch.setenv("RETENTION_VACUUM_ENABLED", "false")
-
-    from importlib import reload
-    import backend.config as cfg_mod
-    for attr in list(vars(cfg_mod).keys()):
-        if attr == "settings":
-            delattr(cfg_mod, attr)
-    reload(cfg_mod)
-
-    from backend.config import settings
-    assert settings.retention_days_threats == 7
-    assert settings.retention_days_correlations == 14
-    assert settings.retention_cleanup_interval_seconds == 300
-    assert settings.retention_vacuum_enabled is False
-
-
-def test_retention_settings_validation():
-    """Retention days should be clamped to [1, 3650]."""
-    from pydantic import ValidationError
-    from backend.config import Settings
-
-    with pytest.raises(ValidationError):
-        Settings(
-            _env_file=None,
-            demo_mode=True,
-            retention_days_threats=0,  # Too low
-        )
-
-    with pytest.raises(ValidationError):
-        Settings(
-            _env_file=None,
-            demo_mode=True,
-            retention_days_correlations=9999,  # Too high
-        )
-
-
-# ─── Prometheus Metrics ─────────────────────────────────────────────────
+    await db.save_threat(threat)
+    await db._connection.execute("UPDATE threats SET detected_at = datetime('now', '-100 days') WHERE id = 'old_unresolved'")
+    await db._connection.commit()
+    
+    deleted = await db.delete_threats_older_than(1)
+    assert deleted == 0
+    
+    remaining = await db.get_recent_threats()
+    assert len(remaining) == 1
+    assert remaining[0]["id"] == "old_unresolved"
 
 @pytest.mark.asyncio
-async def test_retention_metrics_recorded(db_with_data):
-    """Retention cleanup should update Prometheus counters and histograms."""
-    from backend.storage.retention import run_retention_cleanup
-    from backend.metrics import retention_rows_deleted_total
-
-    await run_retention_cleanup(threat_days=30, correlation_days=30, do_vacuum=False)
-
-    # Verify cleanup ran and deleted rows
-    # Check the counter was incremented by inspecting metric samples
-    for sample in retention_rows_deleted_total.collect():
-        for s in sample.samples:
-            if s.labels.get("table") == "threat_events":
-                assert s.value >= 2
-            if s.labels.get("table") == "correlation_events":
-                assert s.value >= 2
-
-
-# ─── Cutoff Calculation ─────────────────────────────────────────────────
-
-def test_cutoff_iso_calculation():
-    """_cutoff_iso should return an ISO timestamp of now - N days."""
-    from backend.storage.retention import _cutoff_iso
-    from datetime import datetime, timezone, timedelta
-
-    cutoff = _cutoff_iso(30)
-    parsed = datetime.fromisoformat(cutoff)
-
-    expected = datetime.now(timezone.utc) - timedelta(days=30)
-    diff = abs((parsed - expected).total_seconds())
-    assert diff < 2, f"Cutoff off by {diff} seconds"
-
-
-# ─── Idempotency ────────────────────────────────────────────────────────
+async def test_retention_loop_survives_db_error(db, monkeypatch, capfd):
+    async def mock_delete(days):
+        raise Exception("DB error")
+    
+    monkeypatch.setattr(db, "delete_threats_older_than", mock_delete)
+    
+    task = asyncio.create_task(retention_loop(db, 30, 0.000001))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    
+    out, err = capfd.readouterr()
+    assert "retention_cleanup_failed" in out
+    assert "DB error" in out
 
 @pytest.mark.asyncio
-async def test_cleanup_idempotent(db_with_data, monkeypatch):
-    """Running cleanup twice should not delete anything on the second run."""
-    monkeypatch.setenv("RETENTION_VACUUM_ENABLED", "false")
-    from importlib import reload
-    import backend.config as cfg_mod
-    for attr in list(vars(cfg_mod).keys()):
-        if attr == "settings":
-            delattr(cfg_mod, attr)
-    reload(cfg_mod)
+async def test_run_retention_now_api(monkeypatch):
+    import os
+    os.environ["PYTEST_CURRENT_TEST"] = "true"
+    from fastapi.testclient import TestClient
+    from backend.main import app
+    
+    async def mock_delete(days):
+        return 42
 
-    from backend.storage.retention import run_retention_cleanup
-
-    result1 = await run_retention_cleanup(threat_days=30, correlation_days=30)
-    assert result1["threats_deleted"] == 2
-    assert result1["correlations_deleted"] == 2
-
-    result2 = await run_retention_cleanup(threat_days=30, correlation_days=30)
-    assert result2["threats_deleted"] == 0
-    assert result2["correlations_deleted"] == 0
-
-
+    with TestClient(app) as client:
+        import backend.main
+        monkeypatch.setattr(backend.main.db, "delete_threats_older_than", mock_delete)
+        
+        response = client.post("/api/admin/retention/run")
+        assert response.status_code == 200
+        assert response.json()["deleted"] == 42

@@ -34,27 +34,17 @@ class Settings(BaseSettings):
     )
 
     # Data Retention — controls automatic cleanup of old records.
-    retention_days_threats: int = Field(
-        default=90,
+    threat_retention_days: int = Field(
+        default=30,
         ge=1,
         le=3650,
         description="Days to retain resolved threat events before purging.",
     )
-    retention_days_correlations: int = Field(
-        default=90,
+    retention_check_interval_hours: int = Field(
+        default=6,
         ge=1,
-        le=3650,
-        description="Days to retain correlation events before purging.",
-    )
-    retention_cleanup_interval_seconds: int = Field(
-        default=3600,
-        ge=60,
-        le=86400,
-        description="Seconds between automatic retention cleanup cycles.",
-    )
-    retention_vacuum_enabled: bool = Field(
-        default=True,
-        description="Whether to run VACUUM after cleanup (SQLite only).",
+        le=720,
+        description="Hours between automatic retention cleanup cycles.",
     )
 
     # GitHub scanner
@@ -65,11 +55,14 @@ class Settings(BaseSettings):
     discord_webhook_url: SecretStr = SecretStr("")
     webhook_url: SecretStr = SecretStr("")
 
-    def __repr__(self) -> str:
+def __repr__(self) -> str:
         """Redacted repr — never exposes secret values."""
         return (
             "Settings(demo_mode={!r}, auth_enabled={!r}, log_level={!r}, "
-            "retention_days_threats={!r}, retention_days_correlations={!r})"
+            "threat_retention_days={!r}, retention_check_interval_hours={!r})"
+        ).format(
+            self.demo_mode, self.auth_enabled, self.log_level,
+            self.threat_retention_days, self.retention_check_interval_hours,
         ).format(
             self.demo_mode, self.auth_enabled, self.log_level,
             self.retention_days_threats, self.retention_days_correlations,
