@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="css/main.css">
 
     <!-- Inline critical error styles so they work even if CSS fails to load -->
-    <style>
+    <style nonce="{{ csp_nonce }}">
         .script-load-error {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: #020408; z-index: 5000; display: flex; align-items: center;
@@ -41,24 +41,24 @@
     </div>
 
     <!-- Core Three.js -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script nonce="{{ csp_nonce }}" src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
     <!-- Post-Processing Modules (optional — graceful fallback without bloom) -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js" onerror="window.__bloomUnavailable=true"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js" onerror="window.__bloomUnavailable=true"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js" onerror="window.__bloomUnavailable=true"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js" onerror="window.__bloomUnavailable=true"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js" onerror="window.__bloomUnavailable=true"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js" onerror="window.__bloomUnavailable=true"></script>
+    <script nonce="{{ csp_nonce }}" src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js" onerror="window.__bloomUnavailable=true"></script>
+    <script nonce="{{ csp_nonce }}" src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js" onerror="window.__bloomUnavailable=true"></script>
+    <script nonce="{{ csp_nonce }}" src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js" onerror="window.__bloomUnavailable=true"></script>
+    <script nonce="{{ csp_nonce }}" src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js" onerror="window.__bloomUnavailable=true"></script>
+    <script nonce="{{ csp_nonce }}" src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js" onerror="window.__bloomUnavailable=true"></script>
+    <script nonce="{{ csp_nonce }}" src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js" onerror="window.__bloomUnavailable=true"></script>
 
     <!-- Tween for smooth camera movements (optional — fallback to instant camera) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js" onerror="window.__tweenUnavailable=true"></script>
+    <script nonce="{{ csp_nonce }}" src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js" onerror="window.__tweenUnavailable=true"></script>
 
     <!-- Application Entry Point -->
-    <script type="module" src="js/main.js"></script>
+    <script nonce="{{ csp_nonce }}" type="module" src="js/main.js"></script>
 
     <!-- Fallback: Show error if scripts critically fail -->
-    <script>
+    <script nonce="{{ csp_nonce }}">
         // Timeout: if the module hasn't initialized in 15s, show error
         window.__qvisTimeout = setTimeout(function() {
             var loading = document.getElementById('loading');

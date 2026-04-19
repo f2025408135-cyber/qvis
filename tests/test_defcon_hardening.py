@@ -78,7 +78,7 @@ class TestCSP:
         assert "frame-ancestors 'none'" in csp
 
     def test_form_action_self(self):
-        response = client.get("/api/health")
+        response = client.get("/")
         csp = response.headers.get("content-security-policy", "")
         assert "form-action 'self'" in csp
 

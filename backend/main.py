@@ -1,3 +1,4 @@
+import starlette.requests
 """Main FastAPI application entry point serving QVis API and WebSockets."""
 
 import asyncio
@@ -899,8 +900,25 @@ async def reset_scenario(_auth: None = Depends(verify_api_key)):
     logger.info("scenario_reset_to_mock")
     return {"status": "reset", "message": "Collector reset to mock mode"}
 
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from backend.api.security_headers import generate_nonce, build_csp_header
+
+templates = Jinja2Templates(directory="frontend")
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_index(request: starlette.requests.Request):
+    nonce = generate_nonce()
+    response = templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={"request": request, "csp_nonce": nonce}
+    )
+    response.headers["Content-Security-Policy"] = build_csp_header(nonce)
+    return response
+
 @app.get("/{full_path:path}")
-async def serve_frontend(full_path: str):
+async def serve_frontend(request: starlette.requests.Request, full_path: str):
     """Serves the SPA frontend files. Rejects null bytes and reserved paths."""
     # Let FastAPI handle its own built-in routes
     if full_path in _RESERVED_PATHS:
@@ -927,8 +945,13 @@ async def serve_frontend(full_path: str):
     # SPA fallback: serve index.html for any unmatched route
     index_file = frontend_dir / "index.html"
     if index_file.is_file():
-        from starlette.responses import FileResponse
-        return FileResponse(index_file)
+        nonce = generate_nonce()
+        response = templates.TemplateResponse(
+            "index.html",
+            {"request": request, "csp_nonce": nonce}
+        )
+        response.headers["Content-Security-Policy"] = build_csp_header(nonce)
+        return response
     raise HTTPException(status_code=404, detail="Frontend not found")
 
 
