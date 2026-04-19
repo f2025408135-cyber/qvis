@@ -23,3 +23,23 @@ playwright = ">=1.40.0"
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 150
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "S", "B", "A"]
+ignore = ["S101", "S104", "E501", "E402", "N802", "B007", "B017", "F841", "E741", "E712", "W293", "F821", "E701", "S110", "S311", "N807", "UP042", "A002", "S608"]  # Allow assert in tests, allow 0.0.0.0 for dev
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "N"]  # Relax security and naming in tests
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_errors = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
