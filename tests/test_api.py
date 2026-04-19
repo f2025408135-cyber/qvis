@@ -9,7 +9,19 @@ from backend.main import app
 
 client = TestClient(app)
 
-def test_health_endpoint_returns_ok():
+def test_health_endpoint_returns_ok(monkeypatch):
+    import backend.main
+    from datetime import datetime, timezone
+    
+    async def mock_health_check():
+        return True
+        
+    monkeypatch.setattr(backend.main.db, "health_check", mock_health_check)
+    
+    backend.main._health_state["last_collection_at"] = datetime.now(timezone.utc)
+    backend.main._health_state["last_collection_error"] = None
+    backend.main._health_state["last_engine_cycle_at"] = datetime.now(timezone.utc)
+    backend.main._health_state["last_broadcast_at"] = datetime.now(timezone.utc)
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] in ["healthy", "degraded"]

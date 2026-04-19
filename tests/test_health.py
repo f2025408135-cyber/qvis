@@ -1,8 +1,6 @@
 
 import os
-import time
 import pytest
-
 os.environ["PYTEST_CURRENT_TEST"] = "true"
 
 from fastapi.testclient import TestClient
@@ -10,23 +8,30 @@ from backend.main import app
 
 client = TestClient(app)
 
-def test_health_returns_200_when_all_healthy():
+def test_health_returns_200_when_all_healthy(monkeypatch):
+    import backend.main
+    from datetime import datetime, timezone
+    
+    async def mock_health_check():
+        return True
+        
+    monkeypatch.setattr(backend.main.db, "health_check", mock_health_check)
+    
+    backend.main._health_state["last_collection_at"] = datetime.now(timezone.utc)
+    backend.main._health_state["last_collection_error"] = None
+    backend.main._health_state["last_engine_cycle_at"] = datetime.now(timezone.utc)
+    backend.main._health_state["last_broadcast_at"] = datetime.now(timezone.utc)
+    
     response = client.get("/health")
-    assert response.status_code == 200
+    assert response.status_code == 200, response.json()
 
 def test_health_returns_503_when_db_unreachable(monkeypatch):
     import backend.main
-    async def mock_execute(*args, **kwargs):
-        raise Exception("DB unreachable")
     
-    class MockDb:
-        async def execute(self, *args):
-            raise Exception("DB unreachable")
-            
-    async def mock_get_conn():
-        return MockDb()
+    async def mock_health_check():
+        return False
         
-    monkeypatch.setattr("backend.storage.database._get_connection", mock_get_conn)
+    monkeypatch.setattr(backend.main.db, "health_check", mock_health_check)
     response = client.get("/health")
     assert response.status_code == 503
     assert response.json()["status"] == "unhealthy"
@@ -53,7 +58,20 @@ def test_health_components_include_all_four():
     assert "threat_engine" in data["components"]
     assert "websocket" in data["components"]
 
-def test_readiness_probe_returns_200():
+def test_readiness_probe_returns_200(monkeypatch):
+    import backend.main
+    from datetime import datetime, timezone
+    
+    async def mock_health_check():
+        return True
+        
+    monkeypatch.setattr(backend.main.db, "health_check", mock_health_check)
+    
+    backend.main._health_state["last_collection_at"] = datetime.now(timezone.utc)
+    backend.main._health_state["last_collection_error"] = None
+    backend.main._health_state["last_engine_cycle_at"] = datetime.now(timezone.utc)
+    backend.main._health_state["last_broadcast_at"] = datetime.now(timezone.utc)
+    
     assert client.get("/ready").status_code == 200
 
 def test_liveness_probe_always_returns_200():

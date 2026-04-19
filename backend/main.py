@@ -48,7 +48,7 @@ from backend.threat_engine.correlator import ThreatCorrelator
 from backend.threat_engine.baseline import BaselineManager
 from backend.threat_engine.models import SimulationSnapshot, BackendNode, ThreatEvent, Severity
 from backend.threat_engine.rules import load_threshold_config_from_file, set_threshold_config, get_threshold_config
-from backend.storage.database import init_db, close_db
+from backend.storage import create_database
 
 
 from enum import Enum
@@ -424,31 +424,34 @@ async def simulation_loop():
             await asyncio.sleep(5)
 
 # ─── Lifespan ──────────────────────────────────────────────────────────
+db = create_database(settings)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manages application startup and teardown routines."""
+    global latest_snapshot
+    await db.initialize()
+    logger.info("database_initialised")
 
-    # Initialise the SQLite database (tables + WAL mode)
-    await init_db()
-    from backend.storage.database import _db_path as _actual_db_path
-    logger.info("database_initialised", path=str(_actual_db_path))
-
-    if "pytest" in str(os.environ):
+    if "PYTEST_CURRENT_TEST" in os.environ:
         logger.info("testing_mode_detected_skipping_loop")
+        try:
+            initial = analyzer.analyze(await collector.collect())
+            async with _snapshot_lock:
+                latest_snapshot = initial
+        except Exception as e:
+            logger.error("initial_snapshot_error", error=str(e))
         yield
-        await close_db()
+        await db.close()
         return
 
     logger.info("starting_simulation_loop")
     task = asyncio.create_task(simulation_loop())
 
-    global latest_snapshot
     try:
         initial = analyzer.analyze(await collector.collect())
         async with _snapshot_lock:
             latest_snapshot = initial
-        # Seed active_threats from the initial snapshot so /api/threats/history
-        # returns data immediately (before the first simulation loop iteration)
         if initial and initial.threats:
             for threat in initial.threats:
                 key = (threat.backend_id, threat.technique_id)
@@ -461,7 +464,7 @@ async def lifespan(app: FastAPI):
     yield
 
     task.cancel()
-    await close_db()
+    await db.close()
     logger.info("shutting_down_simulation_loop")
 
 # ─── FastAPI App ───────────────────────────────────────────────────────
@@ -536,16 +539,17 @@ async def health_check():
     now = datetime.now(timezone.utc)
     overall = HealthStatus.healthy
 
-    # ── Database Check ────────────────────────────────────────────────
+# ── Database Check ────────────────────────────────────────────────
     db_start = time.monotonic()
     try:
-        from backend.storage.database import _get_connection
-        db = await _get_connection()
-        await db.execute("SELECT 1")
+        from backend.main import db
+        healthy = await db.health_check()
+        if not healthy:
+            raise Exception("Database unreachable")
         db_latency = (time.monotonic() - db_start) * 1000
         components["database"] = ComponentHealth(
             status=HealthStatus.healthy,
-            message="SQLite reachable and writable",
+            message="Database reachable",
             latency_ms=round(db_latency, 2),
         )
     except Exception as e:
@@ -730,43 +734,25 @@ async def export_threats_stix(
     return export_stix_bundle(snapshot.threats, limit=limit, offset=offset)
 
 # ─── Threat History Endpoint ───────────────────────────────────────────
+
 @app.get("/api/threats/history", tags=["threats"])
 async def get_threat_history(
     limit: int = Query(default=100, ge=1, le=1000, description="Max events to return"),
-    offset: int = Query(default=0, ge=0, le=100000, description="Events to skip"),
     severity: Optional[str] = Query(default=None, description="Filter by severity"),
     _auth: None = Depends(verify_api_key),
 ):
-    """Returns paginated threat history from the persistent database.
+    """Returns paginated, historically persisted threat events."""
+    threats = await db.get_recent_threats(limit=limit, severity=severity)
+    return threats
 
-    This endpoint now reads from SQLite, giving all-time visibility
-    rather than only the current in-memory window.
-    """
-    from backend.storage.database import get_threats as db_get_threats
-    return await db_get_threats(limit=limit, offset=offset, severity_filter=severity)
-
-
-# ─── Threat Statistics Endpoint ────────────────────────────────────────
 @app.get("/api/threats/stats", tags=["threats"])
 async def get_threat_stats_endpoint(_auth: None = Depends(verify_api_key)):
-    """Returns aggregated statistics over all persisted threat events.
+    """Returns aggregated statistics over all persisted threat events."""
+    stats = await db.get_threat_stats()
+    return stats
 
-    Response shape:
-    {
-        total_all_time: int,
-        by_severity: {severity: count, ...},
-        by_platform: {platform: count, ...},
-        by_technique: {technique_id: count, ...},
-        first_detected: str | null,  (ISO-8601)
-        last_detected: str | null   (ISO-8601)
-    }
-    """
-    from backend.storage.database import get_threat_stats as db_get_stats
-    return await db_get_stats()
-
-
-# ─── Retention Stats Endpoint ──────────────────────────────────────────
-@app.get("/api/admin/retention", tags=["admin"])
+@app.get("/api/admin/retention"
+, tags=["admin"])
 async def get_retention_stats_endpoint(_auth: None = Depends(verify_api_key)):
     """Returns data retention statistics and cleanup eligibility.
 

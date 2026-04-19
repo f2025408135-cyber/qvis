@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     log_format: str = Field(default="console", description="Log output format: 'console' or 'json'")
 
     # Database — controls which backend Alembic and the app use.
+    db_pool_size: int = 10
     #   SQLite (default): sqlite+aiosqlite:///data/qvis.db
     #   PostgreSQL:       postgresql+asyncpg://user:pass@host:5432/qvis
     database_url: str = Field(
