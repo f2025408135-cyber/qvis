@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # Security
     auth_enabled: bool = False
     api_key: SecretStr = SecretStr("")
+    jwt_secret: SecretStr = SecretStr("super-secret-default-key-change-in-prod")
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 1440
     rate_limit: str = "60/60"
 
     # Logging

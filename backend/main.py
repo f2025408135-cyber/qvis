@@ -42,7 +42,7 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 from backend.api.websocket import manager
-from backend.api.auth import verify_api_key, _hash_key, _get_hashed_key
+from backend.api.auth import verify_api_key, admin_required, _hash_key, _get_hashed_key
 from backend.api.security_headers import SecurityHeadersMiddleware
 from backend.api.ratelimit import RateLimitMiddleware
 from backend.threat_engine.analyzer import ThreatAnalyzer
@@ -765,7 +765,7 @@ async def get_threat_stats_endpoint(_auth: None = Depends(verify_api_key)):
 
 
 @app.post("/api/admin/retention/run", tags=["admin"])
-async def run_retention_now(_auth: None = Depends(verify_api_key)):
+async def run_retention_now(_auth: None = Depends(admin_required)):
     """
     Manually trigger a retention cleanup cycle.
     Requires authentication. Returns count of deleted records.
@@ -859,7 +859,7 @@ from urllib.parse import unquote
 active_scenario = {"name": None}
 
 @app.post("/api/scenario/load")
-async def load_scenario(name: str, _auth: None = Depends(verify_api_key)):
+async def load_scenario(name: str, _auth: None = Depends(admin_required)):
     """Load a pre-recorded attack scenario for playback."""
     import re
     if not re.match(r'^[a-zA-Z0-9_\-]+$', name):
@@ -885,7 +885,7 @@ async def list_scenarios():
     return {"scenarios": list(SCENARIOS.keys())}
 
 @app.post("/api/scenario/reset")
-async def reset_scenario(_auth: None = Depends(verify_api_key)):
+async def reset_scenario(_auth: None = Depends(admin_required)):
     """Reset to the default mock collector after a scenario playback."""
     global collector, active_scenario
     if active_scenario.get("name") is None:
