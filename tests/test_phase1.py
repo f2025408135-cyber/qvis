@@ -16,7 +16,7 @@ class TestSecurityHeaders:
     """Verify security headers are present on all responses."""
 
     def test_csp_header_present(self):
-        response = client.get("/api/health")
+        response = client.get("/")
         csp = response.headers.get("content-security-policy", "")
         assert "default-src 'self'" in csp
         assert "script-src" in csp
