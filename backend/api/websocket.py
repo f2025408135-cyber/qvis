@@ -3,12 +3,14 @@ import json
 from typing import List, Optional
 from fastapi import WebSocket, WebSocketDisconnect
 import structlog
+import traceback
 from backend.threat_engine.models import SimulationSnapshot
 from backend.metrics import (
     websocket_connections_active,
     websocket_messages_sent_total,
     websocket_errors_total,
 )
+from backend.config import settings
 
 logger = structlog.get_logger()
 
@@ -17,12 +19,40 @@ MAX_CONNECTIONS = 200
 MAX_MESSAGE_SIZE = 256 * 1024  # 256 KB
 MAX_MESSAGES_PER_MINUTE = 60  # Prevent message flooding
 
+# Redis Pub/Sub for HA WebSockets
+redis_client = None
+pubsub = None
+
+if settings.redis_url:
+    try:
+        import redis.asyncio as redis
+        redis_client = redis.from_url(settings.redis_url)
+        pubsub = redis_client.pubsub()
+    except Exception as e:
+        logger.error("redis_connection_error", error=str(e))
+        redis_client = None
+        pubsub = None
 
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
         self._per_client_msg_count: dict = {}  # client -> count
         self._per_client_window_start: dict = {}  # client -> timestamp
+        self._redis_task = None
+        
+        if redis_client:
+            self._redis_task = asyncio.create_task(self._redis_listener())
+
+    async def _redis_listener(self):
+        """Listen for broadcast messages from Redis and send to local WebSockets."""
+        try:
+            await pubsub.subscribe("qvis-websocket-broadcast")
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    data = message["data"].decode("utf-8")
+                    await self._local_broadcast(data)
+        except Exception as e:
+            logger.error("redis_listener_error", error=str(e))
 
     def _check_message_rate(self, websocket: WebSocket) -> bool:
         """Check if a client is sending too many messages. Returns True if allowed."""
@@ -77,18 +107,28 @@ class ConnectionManager:
             websocket_errors_total.inc()
             self.disconnect(websocket)
 
-    async def broadcast(self, message: str):
-        for connection in self.active_connections:
+    async def _local_broadcast(self, message: str):
+        """Send message to all locally connected websockets."""
+        from backend.main import _health_state
+        from datetime import datetime, timezone
+        
+        for connection in list(self.active_connections):
             try:
                 await connection.send_text(message)
-                from backend.main import _health_state
-                from datetime import datetime, timezone
                 _health_state['last_broadcast_at'] = datetime.now(timezone.utc)
                 websocket_messages_sent_total.inc()
             except Exception as e:
                 logger.error("websocket_broadcast_error", error=str(e))
                 websocket_errors_total.inc()
                 self.disconnect(connection)
+
+    async def broadcast(self, message: str):
+        if redis_client:
+            # Publish to Redis so all instances receive it
+            await redis_client.publish("qvis-websocket-broadcast", message)
+        else:
+            # Fallback to local broadcast
+            await self._local_broadcast(message)
 
     async def broadcast_snapshot(self, snapshot: SimulationSnapshot):
         await self.broadcast(snapshot.model_dump_json())
