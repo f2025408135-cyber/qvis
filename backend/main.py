@@ -484,7 +484,23 @@ app = FastAPI(title="QVis API", lifespan=lifespan)
 
 # Instrument Prometheus metrics
 # Instrument Prometheus metrics
+
+# OpenTelemetry Tracing
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+import os
+
+# Only enable console exporter if running explicitly, avoid I/O error during pytest tearing down
+if not os.environ.get("PYTEST_CURRENT_TEST"):
+    provider = TracerProvider()
+    provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+    trace.set_tracer_provider(provider)
+    FastAPIInstrumentor.instrument_app(app)
+
 instrumentator = Instrumentator().instrument(app)
+
 # We manually expose it below to add authentication
 
 
