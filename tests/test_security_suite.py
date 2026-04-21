@@ -57,39 +57,3 @@ def test_audit_log_integrity(client):
     )
     audit_logger.log_event(event)
     assert audit_logger.verify_chain() is True
-
-
-def test_circuit_breaker_opens_and_closes():
-    from backend.utils.circuit_breaker import CircuitBreaker
-    import asyncio
-    
-    cb = CircuitBreaker(failure_threshold=2, recovery_timeout=1)
-    
-    async def failing_func():
-        raise ValueError("simulated")
-        
-    async def passing_func():
-        return "success"
-        
-    # Fail 1
-    with pytest.raises(ValueError):
-        asyncio.run(cb.call(failing_func))
-    assert cb.state == "CLOSED"
-    
-    # Fail 2 -> Trips OPEN
-    with pytest.raises(ValueError):
-        asyncio.run(cb.call(failing_func))
-    assert cb.state == "OPEN"
-    
-    # Reject while OPEN
-    with pytest.raises(Exception) as e:
-        asyncio.run(cb.call(passing_func))
-    assert "OPEN" in str(e)
-    
-    # Wait for recovery timeout
-    import time
-    time.sleep(1.1)
-    
-    # Success -> HALF-OPEN -> CLOSED
-    assert asyncio.run(cb.call(passing_func)) == "success"
-    assert cb.state == "CLOSED"

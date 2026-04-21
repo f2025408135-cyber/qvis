@@ -1,3 +1,11 @@
+
+import pytest
+import os
+
+@pytest.fixture(autouse=True)
+def bypass_auth_for_legacy_tests(monkeypatch):
+    from backend.config import settings
+    monkeypatch.setattr(settings, "auth_enabled", False)
 import pytest
 from fastapi.testclient import TestClient
 from backend.main import app

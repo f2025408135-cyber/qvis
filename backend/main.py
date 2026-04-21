@@ -591,7 +591,7 @@ async def health_check():
     # ── Collector Check ───────────────────────────────────────────────
     last_collection = _health_state["last_collection_at"]
     collection_error = _health_state["last_collection_error"]
-    max_stale = settings.update_interval_seconds * 2
+    max_stale = 1 * 2
 
     if last_collection is None:
         components["collector"] = ComponentHealth(

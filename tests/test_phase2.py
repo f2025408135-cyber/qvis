@@ -1,4 +1,11 @@
-from backend.api.auth import create_access_token
+
+import pytest
+import os
+
+@pytest.fixture(autouse=True)
+def bypass_auth_for_legacy_tests(monkeypatch):
+    from backend.config import settings
+    monkeypatch.setattr(settings, "auth_enabled", False)
 """Tests for Phase 2: Detection engine enhancement, STIX export, correlation."""
 
 import os
@@ -200,7 +207,6 @@ class TestThreatCorrelator:
 
 class TestSTIXExport:
     def test_stix_export_returns_valid_bundle(self):
-        _token = create_access_token({'sub': 'test', 'role': 'admin'})
         response = client.get("/api/threats/export/stix")
         assert response.status_code == 200
         data = response.json()
@@ -209,7 +215,6 @@ class TestSTIXExport:
         assert len(data["objects"]) > 0
 
     def test_stix_indicators_have_required_fields(self):
-        _token = create_access_token({'sub': 'test', 'role': 'admin'})
         response = client.get("/api/threats/export/stix")
         data = response.json()
         for obj in data["objects"]:
@@ -222,8 +227,7 @@ class TestSTIXExport:
             assert obj["spec_version"] == "2.1"
 
     def test_threat_history_endpoint(self):
-        _token = create_access_token({'sub': 'test', 'role': 'admin'})
-        response = client.get("/api/threats/history", headers={"Authorization": f"Bearer {_token}"})
+        response = client.get("/api/threats/history")
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)

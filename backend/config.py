@@ -6,6 +6,7 @@ import os
 class Settings(BaseSettings):
     # === AUTHENTICATION (SECURE BY DEFAULT) ===
     auth_enabled: bool = Field(default=True, description="MUST be True in production")
+    api_key: SecretStr = Field(default=SecretStr(""))
     jwt_secret: SecretStr = Field(
         default_factory=lambda: SecretStr(os.getenv("QVIS_JWT_SECRET", os.urandom(32).hex())),
         description="Cryptographically secure random key if not provided"
