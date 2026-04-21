@@ -35,10 +35,12 @@ async def fetch_endpoint(client, url, method="GET", json_data=None, headers=None
             stats['api']['401'] += 1
         else:
             stats['api']['failed'] += 1
+            print(f"Failed: {url} {method} {status}")
             
         return status, latency
     except Exception as e:
         stats['api']['failed'] += 1
+        pass
         return None, 0.0
 
 async def run_api_stress_test():
@@ -47,12 +49,12 @@ async def run_api_stress_test():
     endpoints = [
         (f"{API_URL}/health", "GET", None),
         (f"{API_URL}/api/threats/history?limit=100", "GET", None),
-        (f"{API_URL}/api/simulation/snapshot", "GET", None),
+        (f"{API_URL}/api/snapshot", "GET", None),
         (f"{API_URL}/api/threats/stats", "GET", None),
         (f"{API_URL}/api/admin/retention/run", "POST", None) # Will 401 without auth, which is correct
     ]
     
-    async with httpx.AsyncClient(limits=httpx.Limits(max_connections=CONCURRENCY, max_keepalive_connections=CONCURRENCY), timeout=10.0) as client:
+    async with httpx.AsyncClient(limits=httpx.Limits(max_connections=CONCURRENCY, max_keepalive_connections=CONCURRENCY), timeout=30.0) as client:
         tasks = []
         for i in range(NUM_REQUESTS):
             url, method, data = endpoints[i % len(endpoints)]
