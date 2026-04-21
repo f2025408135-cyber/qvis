@@ -12,7 +12,7 @@ def create_database(settings: Settings) -> AbstractDatabase:
     SQLite: DATABASE_URL=sqlite:///./data/qvis.db (default)
     PostgreSQL: DATABASE_URL=postgresql://user:pass@host/dbname
     """
-    url = settings.database_url
+    url = settings.database_url.get_secret_value()
 
     if url.startswith(("postgresql://", "postgres://", "postgresql+asyncpg://")):
         from backend.storage.postgres_db import PostgreSQLDatabase

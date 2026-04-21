@@ -1,3 +1,4 @@
+from backend.api.auth import create_access_token
 import pytest_asyncio
 """Tests for the data retention policy engine."""
 
@@ -136,6 +137,7 @@ async def test_run_retention_now_api(monkeypatch):
         import backend.main
         monkeypatch.setattr(backend.main.db, "delete_threats_older_than", mock_delete)
         
-        response = client.post("/api/admin/retention/run")
+        _token = create_access_token({'sub': 'test', 'role': 'admin'})
+        response = client.post("/api/admin/retention/run", headers={"Authorization": f"Bearer {_token}"})
         assert response.status_code == 200
         assert response.json()["deleted"] == 42

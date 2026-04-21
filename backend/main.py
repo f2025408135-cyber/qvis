@@ -492,14 +492,15 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 import os
 
-# Only enable console exporter if running explicitly, avoid I/O error during pytest tearing down
 if not os.environ.get("PYTEST_CURRENT_TEST"):
     provider = TracerProvider()
     provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
     trace.set_tracer_provider(provider)
     FastAPIInstrumentor.instrument_app(app)
 
-instrumentator = Instrumentator().instrument(app)
+from prometheus_fastapi_instrumentator import Instrumentator
+if not os.environ.get("PYTEST_CURRENT_TEST"):
+    instrumentator = Instrumentator().instrument(app)
 
 # We manually expose it below to add authentication
 

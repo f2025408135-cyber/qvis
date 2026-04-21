@@ -1,3 +1,4 @@
+from backend.api.auth import create_access_token
 """Integration tests for features fixed in the v1 manual (chunks 1-10)."""
 
 import pytest
@@ -46,7 +47,7 @@ class TestThreatHistory:
     """Chunk 2: /api/threats/history should return non-empty data."""
 
     def test_history_returns_list(self, client):
-        resp = client.get("/api/threats/history")
+        resp = client.get("/api/threats/history", headers={"Authorization": f"Bearer {_token}"})
         assert resp.status_code == 200
         data = resp.json()
         assert isinstance(data, list)

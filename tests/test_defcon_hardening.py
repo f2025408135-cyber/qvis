@@ -52,7 +52,7 @@ class TestSnapshotLock:
         assert hasattr(m, '_snapshot_lock')
 
     def test_ensure_snapshot_returns_data(self):
-        response = client.get("/api/snapshot")
+        _token = create_access_token({"sub": "test", "role": "admin"}); response = client.get("/api/snapshot", headers={"Authorization": f"Bearer {_token}"})
         assert response.status_code == 200
         data = response.json()
         assert "snapshot_id" in data

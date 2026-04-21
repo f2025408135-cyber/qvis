@@ -1,3 +1,4 @@
+from backend.api.auth import create_access_token
 """Tests for Phase 2: Detection engine enhancement, STIX export, correlation."""
 
 import os
@@ -199,6 +200,7 @@ class TestThreatCorrelator:
 
 class TestSTIXExport:
     def test_stix_export_returns_valid_bundle(self):
+        _token = create_access_token({'sub': 'test', 'role': 'admin'})
         response = client.get("/api/threats/export/stix")
         assert response.status_code == 200
         data = response.json()
@@ -207,6 +209,7 @@ class TestSTIXExport:
         assert len(data["objects"]) > 0
 
     def test_stix_indicators_have_required_fields(self):
+        _token = create_access_token({'sub': 'test', 'role': 'admin'})
         response = client.get("/api/threats/export/stix")
         data = response.json()
         for obj in data["objects"]:
@@ -219,7 +222,8 @@ class TestSTIXExport:
             assert obj["spec_version"] == "2.1"
 
     def test_threat_history_endpoint(self):
-        response = client.get("/api/threats/history")
+        _token = create_access_token({'sub': 'test', 'role': 'admin'})
+        response = client.get("/api/threats/history", headers={"Authorization": f"Bearer {_token}"})
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)

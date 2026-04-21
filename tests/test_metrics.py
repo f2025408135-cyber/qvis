@@ -131,7 +131,7 @@ class TestMetricsEndpoint:
         from backend.main import app
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/metrics")
+            _token = create_access_token({"sub": "test", "role": "admin"}); response = await client.get("/metrics", headers={"Authorization": f"Bearer {_token}"})
         assert response.status_code == 200
 
     @pytest.mark.asyncio
@@ -140,7 +140,7 @@ class TestMetricsEndpoint:
         from backend.main import app
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/metrics")
+            _token = create_access_token({"sub": "test", "role": "admin"}); response = await client.get("/metrics", headers={"Authorization": f"Bearer {_token}"})
         text = response.text
         # Prometheus exposition format starts with HELP and TYPE lines
         assert "HELP" in text or "TYPE" in text or "qvis_" in text or "http_" in text
@@ -151,7 +151,7 @@ class TestMetricsEndpoint:
         from backend.main import app
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/metrics")
+            _token = create_access_token({"sub": "test", "role": "admin"}); response = await client.get("/metrics", headers={"Authorization": f"Bearer {_token}"})
         text = response.text
         # At least one custom metric should appear after simulation starts
         # The auto-instrumented metrics should always be present
@@ -163,7 +163,7 @@ class TestMetricsEndpoint:
         from backend.main import app
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/metrics")
+            _token = create_access_token({"sub": "test", "role": "admin"}); response = await client.get("/metrics", headers={"Authorization": f"Bearer {_token}"})
         text = response.text
         # prometheus_client default metrics include process info
         assert "python_" in text or "process_" in text
@@ -314,7 +314,7 @@ class TestMetricsIntegration:
              patch("backend.api.auth.settings.api_key", SecretStr("secret")):
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                response = await client.get("/metrics")
+                _token = create_access_token({"sub": "test", "role": "admin"}); response = await client.get("/metrics", headers={"Authorization": f"Bearer {_token}"})
             
             assert response.status_code in [401, 403]
 

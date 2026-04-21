@@ -1,76 +1,74 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
 from pydantic import Field, SecretStr
-
+from typing import List, Optional
+import os
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="forbid")
-
-    demo_mode: bool = True
-    update_interval_seconds: int = 30
-
-    # ─── Credentials (SecretStr — never logged or exposed via repr/dump) ──
-    ibm_quantum_token: SecretStr = SecretStr("")
-    aws_access_key_id: SecretStr = SecretStr("")
-    aws_secret_access_key: SecretStr = SecretStr("")
-    aws_default_region: str = "us-east-1"
-    azure_quantum_subscription_id: SecretStr = SecretStr("")
-
-    # Security
-    auth_enabled: bool = False
-    api_key: SecretStr = SecretStr("")
-    jwt_secret: SecretStr = SecretStr("super-secret-default-key-change-in-prod")
+    # === AUTHENTICATION (SECURE BY DEFAULT) ===
+    auth_enabled: bool = Field(default=True, description="MUST be True in production")
+    jwt_secret: SecretStr = Field(
+        default_factory=lambda: SecretStr(os.getenv("QVIS_JWT_SECRET", os.urandom(32).hex())),
+        description="Cryptographically secure random key if not provided"
+    )
     jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 1440
+    jwt_expire_minutes: int = 30
+    
+    # === DEMO MODE DISABLED BY DEFAULT ===
+    demo_mode: bool = Field(default=False, description="MUST be False in production")
+
+    # === DATABASE ===
+    database_url: SecretStr = Field(
+        default_factory=lambda: SecretStr(os.getenv("QVIS_DATABASE_URL", "sqlite+aiosqlite:///./data/qvis_production.db")),
+        description="Always use SecretStr to prevent credential leakage"
+    )
+    db_pool_size: int = 20
+    
+    # Data Retention
+    retention_days_threats: int = 30
+    retention_days_correlations: int = 90
+    retention_check_interval_hours: int = 6
+
+    # === RATE LIMITING ===
     rate_limit: str = "60/60"
-    redis_url: str | None = None
 
-    # Logging
-    log_level: str = Field(default="INFO", description="Logging level (DEBUG/INFO/WARNING/ERROR/CRITICAL)")
-    log_format: str = Field(default="console", description="Log output format: 'console' or 'json'")
-
-    # Database — controls which backend Alembic and the app use.
-    db_pool_size: int = 10
-    #   SQLite (default): sqlite+aiosqlite:///data/qvis.db
-    #   PostgreSQL:       postgresql+asyncpg://user:pass@host:5432/qvis
-    database_url: str = Field(
-        default="sqlite+aiosqlite:///data/qvis.db",
-        description="SQLAlchemy database URL. Supports SQLite and PostgreSQL.",
+    # === ENCRYPTION ===
+    encryption_enabled: bool = True
+    encryption_password: SecretStr = Field(
+        default_factory=lambda: SecretStr(os.getenv("QVIS_ENCRYPTION_PASSWORD", "super-secret-password-12345!"))
+    )
+    encryption_salt: SecretStr = Field(
+        default_factory=lambda: SecretStr(os.getenv("QVIS_ENCRYPTION_SALT", os.urandom(16).hex()))
     )
 
-    # Data Retention — controls automatic cleanup of old records.
-    threat_retention_days: int = Field(
-        default=30,
-        ge=1,
-        le=3650,
-        description="Days to retain resolved threat events before purging.",
-    )
-    retention_check_interval_hours: int = Field(
-        default=6,
-        ge=1,
-        le=720,
-        description="Hours between automatic retention cleanup cycles.",
-    )
+    # === METRICS & MONITORING ===
+    metrics_auth_required: bool = True
+    metrics_allowed_users: List[str] = ["admin", "monitoring-service"]
 
-    # GitHub scanner
-    github_token: SecretStr = SecretStr("")
+    # Integrations
+    ibm_quantum_token: SecretStr = Field(default=SecretStr(""))
+    aws_access_key_id: SecretStr = Field(default=SecretStr(""))
+    aws_secret_access_key: SecretStr = Field(default=SecretStr(""))
+    azure_quantum_subscription_id: SecretStr = Field(default=SecretStr(""))
+    github_token: SecretStr = Field(default=SecretStr(""))
+    
+    redis_url: Optional[str] = None
+    
+    log_level: str = "INFO"
+    log_format: str = "json"
 
-    # Alerting
-    slack_webhook_url: SecretStr = SecretStr("")
-    discord_webhook_url: SecretStr = SecretStr("")
-    webhook_url: SecretStr = SecretStr("")
-
-def __repr__(self) -> str:
-        """Redacted repr — never exposes secret values."""
-        return (
-            "Settings(demo_mode={!r}, auth_enabled={!r}, log_level={!r}, "
-            "threat_retention_days={!r}, retention_check_interval_hours={!r})"
-        ).format(
-            self.demo_mode, self.auth_enabled, self.log_level,
-            self.threat_retention_days, self.retention_check_interval_hours,
-        ).format(
-            self.demo_mode, self.auth_enabled, self.log_level,
-            self.retention_days_threats, self.retention_days_correlations,
-        )
-
+    model_config = {
+        "env_file": ".env.production",
+        "env_prefix": "QVIS_",
+        "extra": "ignore"
+    }
 
 settings = Settings()
+
+# Validate strict production settings
+if not os.environ.get("PYTEST_CURRENT_TEST"):
+    if settings.demo_mode:
+        raise RuntimeError("CRITICAL: DEMO_MODE must be False in production")
+    if not settings.auth_enabled:
+        raise RuntimeError("CRITICAL: AUTH_ENABLED must be True in production")
+    if not settings.jwt_secret.get_secret_value():
+        raise RuntimeError("CRITICAL: JWT_SECRET_KEY must be set")
