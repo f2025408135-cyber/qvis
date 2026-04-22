@@ -49,6 +49,16 @@ class ImmutableAuditLog:
         self._last_hash = current_hash
         self._logs.append(payload)
         
+        try:
+            from backend.main import db
+            import asyncio
+            if db:
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    loop.create_task(db.save_audit_log(payload))
+        except Exception:
+            pass
+
         # Log it to stdout with structlog and maintain in-memory chain.
         logger.info(f"security_audit_event: {event.action} by {event.user_id} hash: {current_hash}")
         return payload
@@ -56,12 +66,29 @@ class ImmutableAuditLog:
     def verify_chain(self) -> bool:
         """Validate the audit chain integrity."""
         current_prev = "GENESIS"
-        for log in self._logs:
+        
+        logs_to_verify = self._logs
+        
+        try:
+            from backend.main import db
+            import asyncio
+            if db:
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    # We can't await easily in sync function, so we'll just check memory
+                    # Unless we use run_until_complete which might conflict.
+                    pass
+        except Exception:
+            pass
+            
+        for log in logs_to_verify:
             if log["prev_hash"] != current_prev:
                 logger.critical(f"audit_chain_broken: expected {current_prev} actual {log['prev_hash']}")
                 return False
                 
             payload_copy = log.copy()
+            if "id" in payload_copy:
+                del payload_copy["id"]
             del payload_copy["hash"]
             expected_hash = hashlib.sha256(json.dumps(payload_copy, sort_keys=True).encode()).hexdigest()
             

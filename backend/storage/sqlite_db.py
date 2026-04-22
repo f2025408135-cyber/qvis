@@ -57,6 +57,23 @@ class SQLiteDatabase(AbstractDatabase):
         cursor = await self._connection.execute("CREATE INDEX IF NOT EXISTS idx_threats_severity ON threats(severity)")
         await self._ensure_connection()
         cursor = await self._connection.execute("CREATE INDEX IF NOT EXISTS idx_threats_resolved ON threats(resolved_at) WHERE resolved_at IS NULL")
+        await self._ensure_connection()
+        cursor = await self._connection.execute("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                action TEXT NOT NULL,
+                user TEXT NOT NULL,
+                ip TEXT NOT NULL,
+                resource_type TEXT NOT NULL,
+                resource_id TEXT NOT NULL,
+                status INTEGER NOT NULL,
+                before JSON NOT NULL,
+                after JSON NOT NULL,
+                prev_hash TEXT NOT NULL,
+                hash TEXT NOT NULL UNIQUE
+            )
+        """)
         await self._connection.commit()
 
 
@@ -205,3 +222,33 @@ class SQLiteDatabase(AbstractDatabase):
             "remediation": remediation,
             "resolved_at": row["resolved_at"],
         }
+
+    async def save_audit_log(self, payload: dict) -> None:
+        await self._ensure_connection()
+        await self._connection.execute(
+            """
+            INSERT INTO audit_logs
+            (timestamp, action, user, ip, resource_type, resource_id, status, before, after, prev_hash, hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload["timestamp"],
+                payload["action"],
+                payload["user"],
+                payload["ip"],
+                payload["resource_type"],
+                payload["resource_id"],
+                payload["status"],
+                json.dumps(payload["before"]),
+                json.dumps(payload["after"]),
+                payload["prev_hash"],
+                payload["hash"]
+            )
+        )
+        await self._connection.commit()
+
+    async def get_all_audit_logs(self) -> List[dict]:
+        await self._ensure_connection()
+        cursor = await self._connection.execute("SELECT * FROM audit_logs ORDER BY id ASC")
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]

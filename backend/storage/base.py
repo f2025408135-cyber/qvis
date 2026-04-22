@@ -46,3 +46,11 @@ class AbstractDatabase(ABC):
     @abstractmethod
     async def close(self) -> None:
         """Release all connections. Called at application shutdown."""
+
+    @abstractmethod
+    async def save_audit_log(self, payload: dict) -> None:
+        """Save a hash-chained audit log payload to the database."""
+
+    @abstractmethod
+    async def get_all_audit_logs(self) -> List[dict]:
+        """Fetch all audit logs sorted by id to verify cryptographic chain."""

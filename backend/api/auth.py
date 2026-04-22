@@ -22,8 +22,9 @@ API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
 # Account lockout state
-# IP/User -> (failures, unlock_time)
-_lockout_tracker: Dict[str, dict] = {}
+# For in-memory fallback, use an LRU cache so we don't leak memory during an IP spoofing flood
+from cachetools import LRUCache
+_lockout_tracker: LRUCache = LRUCache(maxsize=10000)
 LOCKOUT_ATTEMPTS = 5
 LOCKOUT_DURATION_SECONDS = 300
 

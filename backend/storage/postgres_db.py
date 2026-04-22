@@ -58,6 +58,22 @@ class PostgreSQLDatabase(AbstractDatabase):
                 CREATE INDEX IF NOT EXISTS idx_threats_resolved
                     ON threats(resolved_at)
                     WHERE resolved_at IS NULL;
+
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                    id SERIAL PRIMARY KEY,
+                    timestamp TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    "user" TEXT NOT NULL,
+                    ip TEXT NOT NULL,
+                    resource_type TEXT NOT NULL,
+                    resource_id TEXT NOT NULL,
+                    status INTEGER NOT NULL,
+                    before JSONB NOT NULL,
+                    after JSONB NOT NULL,
+                    prev_hash TEXT NOT NULL,
+                    hash TEXT NOT NULL UNIQUE
+                );
+
             """)
         logger.info("postgres_initialized", pool_size=self._pool_size)
 
@@ -213,3 +229,29 @@ class PostgreSQLDatabase(AbstractDatabase):
             "remediation": remediation,
             "resolved_at": row["resolved_at"].isoformat() if row["resolved_at"] else None,
         }
+
+    async def save_audit_log(self, payload: dict) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO audit_logs
+                (timestamp, action, "user", ip, resource_type, resource_id, status, before, after, prev_hash, hash)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                """,
+                payload["timestamp"],
+                payload["action"],
+                payload["user"],
+                payload["ip"],
+                payload["resource_type"],
+                payload["resource_id"],
+                payload["status"],
+                json.dumps(payload["before"]),
+                json.dumps(payload["after"]),
+                payload["prev_hash"],
+                payload["hash"]
+            )
+
+    async def get_all_audit_logs(self) -> List[dict]:
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch("SELECT * FROM audit_logs ORDER BY id ASC")
+            return [dict(r) for r in rows]

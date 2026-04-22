@@ -22,16 +22,21 @@ class EncryptionService:
 
         from backend.config import settings
 
-        if not settings.encryption_enabled:
+if not settings.encryption_enabled:
             logger.warning("Encryption is disabled - THIS IS NOT PRODUCTION SAFE")
             self.cipher = None
             self._initialized = True
             return
 
-        password = settings.encryption_password.get_secret_value().encode('utf-8')
-        salt = settings.encryption_salt.get_secret_value().encode('utf-8')
+        password = settings.encryption_password.get_secret_value()
+        salt = settings.encryption_salt.get_secret_value()
+        
+        if not password or not salt:
+            logger.critical("encryption_credentials_missing")
+            raise ValueError("CRITICAL: ENCRYPTION_PASSWORD and ENCRYPTION_SALT must be provided when encryption is enabled.")
 
         kdf = PBKDF2HMAC(
+
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
