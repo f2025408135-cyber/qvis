@@ -12,8 +12,7 @@ from datetime import datetime, timezone
 
 @pytest.mark.asyncio
 async def test_sqlite_satisfies_interface():
-    settings = Settings()
-        db = create_database(Settings(database_url="sqlite:///./data/test.db", auth_enabled=True, jwt_secret="test", encryption_password="test", encryption_salt="test"))
+    db = create_database(Settings(database_url="sqlite:///./data/test.db", auth_enabled=True, jwt_secret="test", encryption_password="test", encryption_salt="test"))
     assert isinstance(db, SQLiteDatabase)
     
     await db.initialize()
@@ -53,7 +52,6 @@ async def test_sqlite_satisfies_interface():
 
 @pytest.mark.asyncio
 async def test_postgres_satisfies_interface():
-    settings = Settings()
-        db = create_database(Settings(database_url="postgresql://user:pass@localhost/db", auth_enabled=True, jwt_secret="test", encryption_password="test", encryption_salt="test"))
+    db = create_database(Settings(database_url="postgresql://user:pass@localhost/db", auth_enabled=True, jwt_secret="test", encryption_password="test", encryption_salt="test"))
     assert isinstance(db, PostgreSQLDatabase)
     # Don't try to initialize or it will try to connect to localhost

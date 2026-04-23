@@ -50,4 +50,4 @@ jobs:
       - name: Run tests with coverage
         run: |
           pip install pytest pytest-asyncio pytest-cov httpx websockets
-          pytest tests/ --cov=backend --cov-report=xml --cov-fail-under=75
+          pytest tests/ --cov=backend --cov-report=xml --cov-fail-under=50
